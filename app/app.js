@@ -863,7 +863,23 @@ async function updateLot(lot, changes, eventType, delta, message) {
   const ev = await logEvent(eventType, updated, delta);
   closeSheet();
   render();
-  toast(message, { type: 'restore', before, eventId: ev.id });
+  toast(message, { type: 'restore', before, eventId: ev.id }, restockAction(updated));
+}
+
+// Tog varan slut (eller slängdes)? Erbjud att lägga den på inköpslistan direkt i meddelandet.
+function restockAction(lot) {
+  if (lot.status !== 'used' && lot.status !== 'discarded') return null;
+  if (state.lots.some(l => l.productId === lot.productId)) return null;
+  if (openItems().some(i => i.productId === lot.productId)) return null;
+  const product = state.products.get(lot.productId);
+  return {
+    label: '🛒 På listan',
+    run: async () => {
+      await addShopping({ product, name: lot.name });
+      updateShopBadge();
+      toast(`${lot.name} på inköpslistan`);
+    },
+  };
 }
 
 async function logEvent(type, lot, delta) {
@@ -918,14 +934,16 @@ async function undo() {
 }
 
 let toastTimer = null;
-function toast(message, undoInfo) {
+// extra: { label, run } – en andra knapp i meddelandet, t.ex. "På listan".
+function toast(message, undoInfo, extra) {
   const el = $('#toast');
   state.undo = undoInfo || null;
-  el.innerHTML = `<span>${esc(message)}</span>${undoInfo ? '<button id="undo">Ångra</button>' : ''}`;
+  el.innerHTML = `<span>${esc(message)}</span><span class="toast-actions">${extra ? `<button id="toast-extra">${esc(extra.label)}</button>` : ''}${undoInfo ? '<button id="undo">Ångra</button>' : ''}</span>`;
   el.hidden = false;
   el.querySelector('#undo')?.addEventListener('click', undo);
+  el.querySelector('#toast-extra')?.addEventListener('click', () => { hideToast(); extra.run(); });
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, undoInfo ? 6000 : 2500);
+  toastTimer = setTimeout(hideToast, extra ? 8000 : undoInfo ? 6000 : 2500);
 }
 function hideToast() { $('#toast').hidden = true; state.undo = null; }
 
