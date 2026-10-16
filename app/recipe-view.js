@@ -83,7 +83,7 @@ function openIngredientPicker(recipe, servings, row) {
           <div class="r-main"><div class="r-name">${esc(l.name)}</div><div class="r-sub">${fmtQty(l.qty, l.unit)} · ${placeLabel(l.place)}</div></div>
         </button>`).join('')}</div>` : ''}
       ${prods.length ? `<div class="group"><h2>Alla varor</h2></div><div class="list">${prods.map(({ p }) => `
-        <button class="row" data-pick="${esc(p.id)}"><span class="thumb">${CATEGORY_ICON[p.category] || '📦'}</span>
+        <button class="row" data-pick="${esc(p.id)}"><span class="thumb">${iconFor(p.name, p.category)}</span>
           <div class="r-main"><div class="r-name">${esc(p.name)}</div><div class="r-sub">Finns inte hemma just nu</div></div>
         </button>`).join('')}</div>` : ''}
       ${!lots.length && !prods.length ? `<p class="meta">Ingen vara matchar. Skriv ett annat namn.</p>` : ''}`;

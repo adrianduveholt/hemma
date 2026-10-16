@@ -23,6 +23,36 @@ const CATEGORY_ICON = {
 };
 const CATEGORIES = Object.keys(CATEGORY_ICON);
 const FREEZE_DAYS = 90;
+// Ikon per vara utifrån namnet; första träffen vinner, så specifika ord står före allmänna.
+// Faller tillbaka på kategorins ikon.
+const NAME_ICONS = [
+  [/kokos/, '🥥'], [/jordnöt|nötter|mandl|cashew/, '🥜'], [/vattenmelon/, '🍉'], [/sötpotatis/, '🍠'],
+  [/vitlök/, '🧄'], [/lök|purjo|schalotten/, '🧅'], [/pommes/, '🍟'], [/potatis/, '🥔'],
+  [/mjölk|yoghurt|kvarg|grädd|crème|fil$/, '🥛'], [/mjöl(?!k)|bulgur|couscous|quinoa/, '🌾'],
+  [/smör|bregott|margarin/, '🧈'], [/ost$|ost\s|parmesan|mozzarella|feta|halloumi|brie|cheddar|präst|herrgård|keso|ricotta|mascarpone/, '🧀'],
+  [/^ägg/, '🥚'], [/granatäpple/, '🍎'], [/äpple/, '🍎'], [/banan/, '🍌'], [/päron/, '🍐'], [/apelsin|clementin/, '🍊'],
+  [/citron|lime/, '🍋'], [/avokado/, '🥑'], [/kiwi/, '🥝'], [/mango/, '🥭'], [/ananas/, '🍍'], [/vindruv|russin/, '🍇'],
+  [/jordgubb/, '🍓'], [/blåbär|hallon/, '🫐'], [/melon/, '🍈'], [/persika|plommon/, '🍑'], 
+  [/morot|palsternack/, '🥕'], [/tomat/, '🍅'], [/körsbär/, '🍒'], [/sparris/, '🌿'], [/gurka/, '🥒'], [/paprika(?!pulver)/, '🫑'], [/chili/, '🌶️'],
+  [/broccoli/, '🥦'], [/sallad|spenat|rucola|kål/, '🥬'], [/champinjon|svamp/, '🍄'], [/majs(?!stärkelse)/, '🌽'],
+  [/ärtor|haricots|bön|kikärt|lins/, '🫘'], [/aubergine/, '🍆'], [/ingefära/, '🫚'],
+  [/basilika|persilja|dill|koriander|gräslök|timjan|oregano|lagerblad/, '🌿'],
+  [/räk|kräft|skagen/, '🦐'], [/mussl/, '🦪'], [/lax|torsk|sej|kolja|fisk|sill|makrill|tonfisk|ansjovis|kaviar/, '🐟'],
+  [/pasta|spaghetti|makaron|penne|lasagne|nudl/, '🍝'],
+  [/kyckling|kalkon/, '🍗'], [/bacon|sidfläsk/, '🥓'], [/korv|chorizo|salami/, '🌭'], [/skinka|prosciutto/, '🍖'],
+  [/färs|biff|entrecôte|filé|högrev|grytbit|lamm|fläsk|karré|kotlett|köttbull/, '🥩'],
+  [/^ris|risotto|jasmin|basmati/, '🍚'],
+  [/havregryn|müsli|flingor/, '🥣'], [/kanelbull/, '🥐'], [/tortilla|pita/, '🫓'], [/bröd|baguette|knäcke/, '🍞'],
+  [/pizza/, '🍕'], [/pannkak/, '🥞'], [/glass/, '🍨'], [/choklad|nutella|kakao/, '🍫'], [/honung|sirap/, '🍯'],
+  [/socker/, '🍬'], [/kaffe/, '☕'], [/^te$/, '🍵'], [/juice/, '🧃'], [/läsk/, '🥤'], [/vatten/, '💧'],
+  [/öl$/, '🍺'], [/vin$/, '🍷'], [/olja/, '🫒'], [/salt$/, '🧂'], [/popcorn/, '🍿'], [/chips/, '🥔'], [/kex/, '🍪'],
+  [/tofu|quorn|soja|vego|falafel/, '🌱'], [/hummus|tzatziki|ketchup|senap|majonnäs|pesto|sås|sylt/, '🥫'],
+];
+function iconFor(name, category) {
+  const n = String(name || '').toLocaleLowerCase('sv-SE');
+  for (const [re, icon] of NAME_ICONS) if (re.test(n)) return icon;
+  return CATEGORY_ICON[category] || '📦';
+}
 
 // ---------- Tillstånd ----------
 const state = {
@@ -190,7 +220,7 @@ function renderSuggest() {
     if (s.type === 'product') {
       const p = s.product;
       return `<li class="${cls}" data-k="${k}" role="option">
-        <span class="thumb">${CATEGORY_ICON[p.category] || '📦'}</span>
+        <span class="thumb">${iconFor(p.name, p.category)}</span>
         <div class="s-label"><div class="s-name">${highlight(p.name, qv)}</div>
         <div class="s-sub">${state.view === 'shop' ? stockHint(p) : `${esc(p.category)} · ${placeLabel(p.place)}`}</div></div>
         <span class="s-tag">${state.view === 'shop' ? '+ På listan' : '+ Lägg till'}</span></li>`;
@@ -233,7 +263,7 @@ function placeLabel(id) { return PLACES.find(p => p.id === id)?.label || id; }
 function thumbHtml(lot) {
   const url = lot.photoId && state.photoUrls.get(lot.photoId);
   if (url) return `<img class="thumb" src="${url}" alt="">`;
-  return `<span class="thumb">${CATEGORY_ICON[lot.category] || '📦'}</span>`;
+  return `<span class="thumb">${lot.category === 'Rester' ? '🍲' : iconFor(lot.name, lot.category)}</span>`;
 }
 function rowHtml(lot, sub) {
   return `<button class="row" data-lot="${lot.id}">
@@ -471,7 +501,7 @@ function openAddSheet(product, newName) {
 
   openSheet(`
     <div class="sheet-head">
-      <span class="thumb" id="add-thumb">${CATEGORY_ICON[form.category] || '📦'}</span>
+      <span class="thumb" id="add-thumb">${iconFor(p.name, form.category)}</span>
       <div><h3>${esc(p.name)}</h3><div class="sub">${isNew ? 'Ny vara' : esc(p.category)}</div></div>
     </div>
     ${isNew ? `<div class="field"><label for="f-cat">Kategori</label>
@@ -522,7 +552,7 @@ function openAddSheet(product, newName) {
     });
     root.querySelector('#f-cat')?.addEventListener('change', e => {
       form.category = e.target.value;
-      root.querySelector('#add-thumb').textContent = CATEGORY_ICON[form.category] || '📦';
+      root.querySelector('#add-thumb').textContent = iconFor(p.name, form.category);
     });
     root.querySelector('#f-photo').addEventListener('click', async () => {
       const blob = await takePhoto();
