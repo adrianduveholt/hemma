@@ -15,13 +15,14 @@ Höj `VERSION` i `app/sw.js` vid varje ändring, annars kan en installerad app v
   platser, bäst före, foto, Ät först-lista, ångra, säkerhetskopia som JSON.
 - Synk (fas 2, kod klar): `app/sync.js` + `supabase/migrations/20261016120000_hemma.sql`. Utkorg i IndexedDB → upsert till
   tabellen `items` (en rad per post, JSON i `data`), hämtning via `server_updated_at`-markör och realtid.
-  Foton i privat bucket `photos/<hushåll>/<id>.jpg`. Inloggning med e-postkod, hushåll med inbjudningskod.
+  Foton i privat bucket `photos/<hushåll>/<id>.jpg`. Inloggning med e-post + lösenord, hushåll med inbjudningskod.
   Uppgifterna för projektet (URL + publishable key) läggs i `app/config.js`.
 - Nästa: recept från ICA-länkar med automatiskt avdrag.
 
 ### Supabase-inställningar
 1. Kör `supabase/migrations/20261016120000_hemma.sql` i SQL Editor.
-2. Authentication → Emails → mallen "Magic Link": lägg in `{{ .Token }}` så att mejlet innehåller koden.
+2. Authentication → Sign In / Providers → Email: stäng av "Confirm email" (inloggning sker med e-post + lösenord).
+3. När båda kontona finns: stäng av "Allow new users to sign up".
 
 Datamodellen är förberedd för synk: uuid-id, `updatedAt` och mjuk radering på alla poster;
 katalogvaror har deterministiska id:n (`cat:<namn>`) så att två telefoner får samma.

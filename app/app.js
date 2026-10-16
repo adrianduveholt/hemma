@@ -337,7 +337,7 @@ async function renderMore() {
 }
 
 // ---------- Synk-kortet ----------
-const syncForm = { email: '', codeSent: false, busy: false, error: '' };
+const syncForm = { email: '', busy: false, error: '' };
 
 function renderSyncCard() {
   const el = $('#sync-card');
@@ -348,14 +348,11 @@ function renderSyncCard() {
   let html;
   if (!st.enabled) {
     html = `<h3>Delat hushåll</h3><p>Synk är inte inställd än – config.js saknar Supabase-uppgifter.</p>`;
-  } else if (!st.user && !syncForm.codeSent) {
-    html = `<h3>Delat hushåll</h3><p>Logga in med din e-post för att dela lagret med resten av hushållet. Du får en kod via mejl.</p>
-      <div class="field"><input id="s-email" type="text" inputmode="email" autocomplete="email" placeholder="namn@exempel.se" value="${esc(syncForm.email)}"></div>
-      ${err}<button class="btn primary" data-sync="send" ${dis}>Skicka kod</button>`;
   } else if (!st.user) {
-    html = `<h3>Ange koden</h3><p>Vi skickade en kod till ${esc(syncForm.email)}.</p>
-      <div class="field"><input id="s-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10"></div>
-      ${err}<div class="btn-row"><button class="btn" data-sync="back" ${dis}>Tillbaka</button><button class="btn primary" data-sync="verify" ${dis}>Logga in</button></div>`;
+    html = `<h3>Delat hushåll</h3><p>Logga in för att dela lagret med resten av hushållet. Första gången trycker du på ”Skapa konto”.</p>
+      <div class="field"><input id="s-email" type="text" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="namn@exempel.se" value="${esc(syncForm.email)}"></div>
+      <div class="field"><input id="s-pw" type="password" autocomplete="current-password" placeholder="Lösenord, minst 6 tecken"></div>
+      ${err}<div class="btn-row"><button class="btn" data-sync="signup" ${dis}>Skapa konto</button><button class="btn primary" data-sync="signin" ${dis}>Logga in</button></div>`;
   } else if (!st.household) {
     html = `<h3>Välj hushåll</h3><p>Inloggad som ${esc(st.user.email)}. Skapa ett hushåll, eller gå med i ett som någon annan redan skapat.</p>
       <div class="field"><input id="s-hname" type="text" placeholder="Namn, t.ex. Hemma" value="Hemma"></div>
@@ -381,28 +378,33 @@ function renderSyncCard() {
 }
 
 async function syncAction(action) {
-  const val = id => $(id)?.value.trim() || '';
+  // Läs fälten innan kortet ritas om, annars töms de.
+  const form = Object.fromEntries(['#s-email', '#s-pw', '#s-hname', '#s-join'].map(id => [id, $(id)?.value || '']));
+  const val = id => form[id].trim();
   syncForm.error = '';
   syncForm.busy = true;
   renderSyncCard();
   try {
-    if (action === 'send') {
+    if (action === 'signin' || action === 'signup') {
       syncForm.email = val('#s-email');
+      const pw = form['#s-pw'];
       if (!/^\S+@\S+\.\S+$/.test(syncForm.email)) throw new Error('Skriv en giltig e-postadress');
-      await Sync.sendCode(syncForm.email);
-      syncForm.codeSent = true;
+      if (pw.length < 6) throw new Error('Lösenordet måste vara minst 6 tecken');
+      await (action === 'signin' ? Sync.signIn(syncForm.email, pw) : Sync.signUp(syncForm.email, pw));
     }
-    if (action === 'back') syncForm.codeSent = false;
-    if (action === 'verify') await Sync.verifyCode(syncForm.email, val('#s-code'));
     if (action === 'create') await Sync.createHousehold(val('#s-hname'));
     if (action === 'join') await Sync.joinHousehold(val('#s-join'));
     if (action === 'now') await Sync.syncNow();
-    if (action === 'signout') { await Sync.signOut(); syncForm.codeSent = false; }
+    if (action === 'signout') await Sync.signOut();
   } catch (e) {
-    syncForm.error = /Okänd kod/.test(e.message) ? 'Hittade inget hushåll med den koden'
-      : /expired|invalid/i.test(e.message) ? 'Koden stämmer inte eller har gått ut'
-      : /rate limit/i.test(e.message) ? 'För många försök – vänta en stund'
-      : e.message;
+    const m = e.message || '';
+    syncForm.error = /Okänd kod/.test(m) ? 'Hittade inget hushåll med den koden'
+      : /Invalid login credentials/i.test(m) ? 'Fel e-post eller lösenord'
+      : /already registered|already exists/i.test(m) ? 'Kontot finns redan – tryck Logga in'
+      : /Email not confirmed/i.test(m) ? 'Kontot är skapat men måste bekräftas. Stäng av ”Confirm email” i Supabase, eller klicka på länken i mejlet och logga sedan in.'
+      : /Signups not allowed/i.test(m) ? 'Nya konton är avstängda i Supabase'
+      : /rate limit/i.test(m) ? 'För många försök – vänta en stund'
+      : m;
   }
   syncForm.busy = false;
   renderSyncCard();

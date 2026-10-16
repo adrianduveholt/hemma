@@ -198,13 +198,18 @@ const Sync = (() => {
       schedulePush();
     },
 
-    async sendCode(email) {
-      const { error } = await client.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    // E-post + lösenord: fungerar inne i den installerade appen, där en mejllänk skulle öppnas i webbläsaren i stället.
+    async signIn(email, password) {
+      const { data, error } = await client.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      status.user = data.user;
+      emit();
     },
-    async verifyCode(email, token) {
-      const { data, error } = await client.auth.verifyOtp({ email, token, type: 'email' });
+    async signUp(email, password) {
+      const { data, error } = await client.auth.signUp({ email, password });
       if (error) throw error;
+      // Utan session är e-postbekräftelse påslagen i Supabase.
+      if (!data.session) throw new Error('Email not confirmed');
       status.user = data.user;
       emit();
     },
