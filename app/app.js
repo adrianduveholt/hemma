@@ -1,0 +1,888 @@
+'use strict';
+
+// ---------- Konstanter ----------
+const PLACES = [
+  { id: 'kyl', label: 'Kyl', icon: '❄️' },
+  { id: 'frys', label: 'Frys', icon: '🧊' },
+  { id: 'skafferi', label: 'Skafferi', icon: '🥫' },
+];
+const UNITS = ['g', 'kg', 'st', 'förp', 'l', 'dl'];
+const QUICK_QTY = {
+  g: [100, 250, 400, 500, 1000],
+  kg: [0.5, 1, 1.5, 2],
+  st: [1, 2, 4, 6, 12],
+  'förp': [1, 2, 3],
+  l: [0.5, 1, 1.5, 2],
+  dl: [1, 2, 2.5, 5],
+};
+const STEP = { g: 50, kg: 0.5, st: 1, 'förp': 1, l: 0.5, dl: 1 };
+const CATEGORY_ICON = {
+  'Fisk & skaldjur': '🐟', 'Kött': '🥩', 'Mejeri': '🧀', 'Ägg': '🥚', 'Frukt': '🍎',
+  'Grönsaker': '🥕', 'Bröd': '🍞', 'Skafferi': '🫙', 'Kryddor': '🧂', 'Fryst': '🧊',
+  'Färdigmat': '🍱', 'Dryck': '🧃', 'Vegetariskt': '🌱', 'Rester': '🍲', 'Övrigt': '📦',
+};
+const CATEGORIES = Object.keys(CATEGORY_ICON);
+const FREEZE_DAYS = 90;
+
+// ---------- Tillstånd ----------
+const state = {
+  view: 'home',
+  stockPlace: 'alla',
+  products: new Map(),
+  lots: [],
+  photoUrls: new Map(),
+  suggestions: [],
+  active: 0,
+  undo: null,
+};
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- Datum ----------
+function todayIso() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function addDays(iso, days) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function daysBetween(fromIso, toIso) {
+  return Math.round((new Date(toIso + 'T12:00:00') - new Date(fromIso + 'T12:00:00')) / 86400000);
+}
+function daysLeft(lot) {
+  return lot.bestBefore ? daysBetween(todayIso(), lot.bestBefore) : null;
+}
+function shortDate(iso) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' });
+}
+function expiryBadge(lot) {
+  const d = daysLeft(lot);
+  if (d === null) return '';
+  let cls = 'ok', text;
+  if (d < 0) { cls = 'bad'; text = d === -1 ? 'Gick ut igår' : `Gick ut för ${-d} d`; }
+  else if (d === 0) { cls = 'bad'; text = 'Idag'; }
+  else if (d === 1) { cls = 'warn'; text = 'Imorgon'; }
+  else if (d <= 3) { cls = 'warn'; text = `${d} dagar`; }
+  else if (d <= 14) { text = `${d} dagar`; }
+  else { cls = ''; text = shortDate(lot.bestBefore); }
+  return `<span class="badge ${cls}">${text}</span>`;
+}
+
+// ---------- Mängder ----------
+const nf = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 2 });
+function fmtQty(qty, unit) {
+  if (unit === 'g' && qty >= 1000) return `${nf.format(qty / 1000)} kg`;
+  if (unit === 'förp') return `${nf.format(qty)} förp`;
+  return `${nf.format(qty)} ${unit}`;
+}
+function roundQty(q, unit) {
+  const step = { g: q < 20 ? 1 : 5, kg: 0.05, l: 0.05, dl: 0.25, st: 0.25, 'förp': 0.25 }[unit] || 0.01;
+  return Math.max(0, Math.round(q / step) * step);
+}
+function parseNum(s) {
+  const n = parseFloat(String(s).replace(',', '.').replace(/\s/g, ''));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+// ---------- Sök ----------
+function norm(s) { return s.toLocaleLowerCase('sv-SE').trim(); }
+
+// Damerau-Levenshtein med tidig avbrytning – tål en bokstav fel, bortglömd eller omkastad.
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let rowMin = Infinity;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      rowMin = Math.min(rowMin, d[i][j]);
+    }
+    if (rowMin > max) return max + 1;
+  }
+  return d[a.length][b.length];
+}
+
+function matchScore(name, q) {
+  const n = norm(name);
+  if (n === q) return 120;
+  if (n.startsWith(q)) return 100 - Math.min(n.length - q.length, 15) * 0.5;
+  const words = n.split(/[\s-]+/);
+  if (words.some(w => w.startsWith(q))) return 80;
+  if (n.includes(q)) return 60;
+  if (q.length >= 3) {
+    const max = q.length >= 6 ? 2 : 1;
+    const dist = w => Math.min(editDistance(q, w.slice(0, q.length), max), editDistance(q, w.slice(0, q.length + 1), max));
+    // Träff i början av namnet väger tyngre än träff på ett senare ord.
+    const first = dist(n);
+    const later = Math.min(...words.slice(1).map(dist), max + 1);
+    if (first <= max) return 48 - first * 10;
+    if (later <= max) return 40 - later * 10;
+  }
+  return 0;
+}
+
+function search(qRaw) {
+  const q = norm(qRaw);
+  if (!q) return [];
+  const results = [];
+
+  const lots = state.lots
+    .map(l => ({ l, s: matchScore(l.name, q) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s || (a.l.bestBefore || '9').localeCompare(b.l.bestBefore || '9'))
+    .slice(0, 4);
+  if (lots.length) {
+    results.push({ type: 'head', label: 'Finns hemma' });
+    for (const { l } of lots) results.push({ type: 'lot', lot: l });
+  }
+
+  const prods = [...state.products.values()]
+    .filter(p => !p.deleted)
+    .map(p => ({ p, s: matchScore(p.name, q) }))
+    .filter(x => x.s > 0)
+    .map(x => ({ ...x, s: x.s + Math.min((x.p.uses || 0) * 4, 30) }))
+    .sort((a, b) => b.s - a.s || a.p.name.localeCompare(b.p.name, 'sv'))
+    .slice(0, 8);
+  results.push({ type: 'head', label: 'Lägg till' });
+  for (const { p } of prods) results.push({ type: 'product', product: p });
+
+  const exact = prods.some(x => norm(x.p.name) === q);
+  if (!exact) results.push({ type: 'new', name: qRaw.trim() });
+  return results;
+}
+
+function highlight(name, qRaw) {
+  const q = norm(qRaw);
+  const i = norm(name).indexOf(q);
+  if (i < 0 || !q) return esc(name);
+  return esc(name.slice(0, i)) + '<mark>' + esc(name.slice(i, i + q.length)) + '</mark>' + esc(name.slice(i + q.length));
+}
+
+function renderSuggest() {
+  const ul = $('#suggest');
+  const qv = $('#q').value;
+  state.suggestions = search(qv);
+  const pickable = state.suggestions.filter(s => s.type !== 'head');
+  state.active = Math.min(state.active, pickable.length - 1);
+  if (!qv.trim()) { ul.hidden = true; return; }
+  let k = -1;
+  ul.innerHTML = state.suggestions.map(s => {
+    if (s.type === 'head') return `<li class="s-head">${s.label}</li>`;
+    k++;
+    const cls = k === state.active ? 'active' : '';
+    if (s.type === 'lot') {
+      const l = s.lot;
+      return `<li class="${cls}" data-k="${k}" role="option">
+        ${thumbHtml(l)}
+        <div class="s-label"><div class="s-name">${highlight(l.name, qv)}</div>
+        <div class="s-sub">${fmtQty(l.qty, l.unit)} · ${placeLabel(l.place)}</div></div>
+        ${expiryBadge(l)}</li>`;
+    }
+    if (s.type === 'product') {
+      const p = s.product;
+      return `<li class="${cls}" data-k="${k}" role="option">
+        <span class="thumb">${CATEGORY_ICON[p.category] || '📦'}</span>
+        <div class="s-label"><div class="s-name">${highlight(p.name, qv)}</div>
+        <div class="s-sub">${esc(p.category)} · ${placeLabel(p.place)}</div></div>
+        <span class="s-tag">+ Lägg till</span></li>`;
+    }
+    return `<li class="${cls}" data-k="${k}" role="option">
+      <span class="thumb">✨</span>
+      <div class="s-label"><div class="s-name">Ny vara: ”${esc(s.name)}”</div>
+      <div class="s-sub">Läggs till i din egen lista</div></div></li>`;
+  }).join('');
+  ul.hidden = false;
+}
+
+function pickSuggestion(k) {
+  const s = state.suggestions.filter(x => x.type !== 'head')[k];
+  if (!s) return;
+  clearQuery();
+  if (s.type === 'lot') openLotSheet(s.lot);
+  else if (s.type === 'product') openAddSheet(s.product);
+  else openAddSheet(null, s.name);
+}
+
+function clearQuery() {
+  $('#q').value = '';
+  $('#q').blur();
+  $('#suggest').hidden = true;
+  $('#q-clear').hidden = true;
+  if (state.view === 'stock') render();
+}
+
+// ---------- Hjälpare för vy ----------
+function placeLabel(id) { return PLACES.find(p => p.id === id)?.label || id; }
+function thumbHtml(lot) {
+  const url = lot.photoId && state.photoUrls.get(lot.photoId);
+  if (url) return `<img class="thumb" src="${url}" alt="">`;
+  return `<span class="thumb">${CATEGORY_ICON[lot.category] || '📦'}</span>`;
+}
+function rowHtml(lot, sub) {
+  return `<button class="row" data-lot="${lot.id}">
+    ${thumbHtml(lot)}
+    <div class="r-main"><div class="r-name">${esc(lot.name)}</div>
+    <div class="r-sub">${sub ?? `${fmtQty(lot.qty, lot.unit)} · ${placeLabel(lot.place)}${lot.openedAt ? ' · öppnad' : ''}`}</div></div>
+    ${expiryBadge(lot)}
+  </button>`;
+}
+function sortByExpiry(a, b) {
+  return (a.bestBefore || '9999').localeCompare(b.bestBefore || '9999') || a.name.localeCompare(b.name, 'sv');
+}
+
+// ---------- Vyer ----------
+function render() {
+  $('#title').textContent = { home: 'Ät först', stock: 'Lager', more: 'Mer' }[state.view];
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
+  for (const v of ['home', 'stock', 'more']) $(`#view-${v}`).hidden = v !== state.view;
+  if (state.view === 'home') renderHome();
+  if (state.view === 'stock') renderStock();
+  if (state.view === 'more') renderMore();
+}
+
+function emptyHtml(icon, title, text) {
+  return `<div class="empty"><div class="big">${icon}</div><strong>${title}</strong>${text}</div>`;
+}
+
+function renderHome() {
+  const el = $('#view-home');
+  const lots = [...state.lots].sort(sortByExpiry);
+  if (!lots.length) {
+    el.innerHTML = emptyHtml('🧺', 'Inget inlagt än', 'Skriv till exempel ”to” i fältet ovan och välj Torsk för att lägga in din första vara.');
+    return;
+  }
+  const expired = lots.filter(l => daysLeft(l) !== null && daysLeft(l) < 0);
+  const soon = lots.filter(l => { const d = daysLeft(l); return d !== null && d >= 0 && d <= 3; });
+  const week = lots.filter(l => { const d = daysLeft(l); return d !== null && d > 3 && d <= 7; });
+  const opened = lots.filter(l => l.openedAt && !expired.includes(l) && !soon.includes(l) && !week.includes(l));
+
+  const section = (title, items) => items.length ? `
+    <div class="group"><h2>${title}</h2><span class="count">${items.length}</span></div>
+    <div class="list">${items.map(l => rowHtml(l)).join('')}</div>` : '';
+
+  el.innerHTML = `
+    <div class="stats">
+      <div class="stat"><b>${lots.length}</b><span>varor hemma</span></div>
+      <div class="stat"><b>${soon.length}</b><span>går ut inom 3 d</span></div>
+      <div class="stat"><b>${expired.length}</b><span>har gått ut</span></div>
+    </div>
+    ${section('Har gått ut', expired)}
+    ${section('Ät inom 3 dagar', soon)}
+    ${section('Inom en vecka', week)}
+    ${section('Öppnade', opened)}
+    ${!expired.length && !soon.length && !week.length && !opened.length
+      ? emptyHtml('✅', 'Inget brådskar', 'Ingenting går ut den närmaste veckan.') : ''}`;
+}
+
+function renderStock() {
+  const el = $('#view-stock');
+  const q = norm($('#q').value);
+  let lots = state.lots.filter(l => state.stockPlace === 'alla' || l.place === state.stockPlace);
+  if (q) lots = lots.filter(l => matchScore(l.name, q) > 0);
+
+  const counts = Object.fromEntries(PLACES.map(p => [p.id, state.lots.filter(l => l.place === p.id).length]));
+  const filters = `<div class="filters">
+    <button class="chip ${state.stockPlace === 'alla' ? 'on' : ''}" data-place="alla">Alla ${state.lots.length}</button>
+    ${PLACES.map(p => `<button class="chip ${state.stockPlace === p.id ? 'on' : ''}" data-place="${p.id}">${p.icon} ${p.label} ${counts[p.id]}</button>`).join('')}
+  </div>`;
+
+  if (!state.lots.length) {
+    el.innerHTML = filters + emptyHtml('🧺', 'Lagret är tomt', 'Varor du lägger till hamnar här, sorterade på kyl, frys och skafferi.');
+    return;
+  }
+  const groups = PLACES.map(p => ({ p, items: lots.filter(l => l.place === p.id).sort((a, b) => a.name.localeCompare(b.name, 'sv') || sortByExpiry(a, b)) }))
+    .filter(g => g.items.length);
+  el.innerHTML = filters + (groups.length ? groups.map(g => `
+    <div class="group"><h2>${g.p.icon} ${g.p.label}</h2><span class="count">${g.items.length}</span></div>
+    <div class="list">${g.items.map(l => rowHtml(l)).join('')}</div>`).join('')
+    : emptyHtml('🔍', 'Inga träffar', 'Ingen vara hemma matchar sökningen.'));
+}
+
+async function renderMore() {
+  const el = $('#view-more');
+  const events = (await db.all('events')).filter(e => !e.deleted);
+  const monthStart = todayIso().slice(0, 8) + '01';
+  const thisMonth = events.filter(e => e.ts.slice(0, 10) >= monthStart);
+  const discarded = thisMonth.filter(e => e.type === 'discarded');
+  const used = thisMonth.filter(e => e.type === 'used');
+  el.innerHTML = `
+    <div class="stats">
+      <div class="stat"><b>${thisMonth.filter(e => e.type === 'added').length}</b><span>inlagda i månaden</span></div>
+      <div class="stat"><b>${used.length}</b><span>uppätna</span></div>
+      <div class="stat"><b>${discarded.length}</b><span>slängda</span></div>
+    </div>
+    ${discarded.length ? `<div class="card"><h3>Slängt den här månaden</h3><p>${discarded.map(e => esc(e.name)).join(', ')}</p></div>` : ''}
+    <div class="card">
+      <h3>Säkerhetskopia</h3>
+      <p>Allt sparas just nu bara i den här telefonen. Spara en kopia ibland, eller flytta data till en annan telefon.</p>
+      <div class="btn-row">
+        <button class="btn" data-action="export">Spara kopia</button>
+        <button class="btn" data-action="import">Läs in kopia</button>
+      </div>
+      <input id="import-input" type="file" accept="application/json,.json" hidden>
+    </div>
+    <div class="card" id="sync-card"></div>
+    <div class="card">
+      <h3>Egna varor</h3>
+      <p>${[...state.products.values()].filter(p => p.custom && !p.deleted).map(p => esc(p.name)).join(', ') || 'Inga egna varor än. Skriv ett namn som inte finns så skapas den.'}</p>
+    </div>
+    <p class="meta">Hemma · version 0.2</p>`;
+  renderSyncCard();
+}
+
+// ---------- Synk-kortet ----------
+const syncForm = { email: '', codeSent: false, busy: false, error: '' };
+
+function renderSyncCard() {
+  const el = $('#sync-card');
+  if (!el) return;
+  const st = Sync.status;
+  const err = syncForm.error ? `<p style="color:var(--bad)">${esc(syncForm.error)}</p>` : '';
+  const dis = syncForm.busy ? 'disabled' : '';
+  let html;
+  if (!st.enabled) {
+    html = `<h3>Delat hushåll</h3><p>Synk är inte inställd än – config.js saknar Supabase-uppgifter.</p>`;
+  } else if (!st.user && !syncForm.codeSent) {
+    html = `<h3>Delat hushåll</h3><p>Logga in med din e-post för att dela lagret med resten av hushållet. Du får en kod via mejl.</p>
+      <div class="field"><input id="s-email" type="text" inputmode="email" autocomplete="email" placeholder="namn@exempel.se" value="${esc(syncForm.email)}"></div>
+      ${err}<button class="btn primary" data-sync="send" ${dis}>Skicka kod</button>`;
+  } else if (!st.user) {
+    html = `<h3>Ange koden</h3><p>Vi skickade en kod till ${esc(syncForm.email)}.</p>
+      <div class="field"><input id="s-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10"></div>
+      ${err}<div class="btn-row"><button class="btn" data-sync="back" ${dis}>Tillbaka</button><button class="btn primary" data-sync="verify" ${dis}>Logga in</button></div>`;
+  } else if (!st.household) {
+    html = `<h3>Välj hushåll</h3><p>Inloggad som ${esc(st.user.email)}. Skapa ett hushåll, eller gå med i ett som någon annan redan skapat.</p>
+      <div class="field"><input id="s-hname" type="text" placeholder="Namn, t.ex. Hemma" value="Hemma"></div>
+      <button class="btn primary" data-sync="create" ${dis}>Skapa hushåll</button>
+      <hr class="sep">
+      <div class="field"><input id="s-join" type="text" placeholder="Inbjudningskod, t.ex. 3F9A2C" autocapitalize="characters"></div>
+      ${err}<button class="btn" data-sync="join" ${dis}>Gå med</button>
+      <p class="meta"><a href="#" data-sync="signout">Logga ut</a></p>`;
+  } else {
+    const line = !st.online ? 'Offline – ändringar skickas när nätet är tillbaka'
+      : st.busy ? 'Synkar…'
+      : st.error ? `Fel: ${st.error}`
+      : st.pending ? `${st.pending} ändringar väntar`
+      : st.lastSync ? `Synkad ${st.lastSync.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })}` : 'Ansluter…';
+    html = `<h3>${esc(st.household.name)}</h3>
+      <p>Inbjudningskod: <strong style="color:var(--text);letter-spacing:.08em">${esc(st.household.invite_code || '…')}</strong><br>
+      Den andra telefonen loggar in och väljer ”Gå med” med koden.</p>
+      <p style="color:${st.error ? 'var(--bad)' : 'var(--muted)'}">${esc(line)}</p>
+      <div class="btn-row"><button class="btn" data-sync="now">Synka nu</button><button class="btn" data-sync="signout">Logga ut</button></div>
+      <p class="meta">Inloggad som ${esc(st.user.email)}</p>`;
+  }
+  el.innerHTML = html;
+}
+
+async function syncAction(action) {
+  const val = id => $(id)?.value.trim() || '';
+  syncForm.error = '';
+  syncForm.busy = true;
+  renderSyncCard();
+  try {
+    if (action === 'send') {
+      syncForm.email = val('#s-email');
+      if (!/^\S+@\S+\.\S+$/.test(syncForm.email)) throw new Error('Skriv en giltig e-postadress');
+      await Sync.sendCode(syncForm.email);
+      syncForm.codeSent = true;
+    }
+    if (action === 'back') syncForm.codeSent = false;
+    if (action === 'verify') await Sync.verifyCode(syncForm.email, val('#s-code'));
+    if (action === 'create') await Sync.createHousehold(val('#s-hname'));
+    if (action === 'join') await Sync.joinHousehold(val('#s-join'));
+    if (action === 'now') await Sync.syncNow();
+    if (action === 'signout') { await Sync.signOut(); syncForm.codeSent = false; }
+  } catch (e) {
+    syncForm.error = /Okänd kod/.test(e.message) ? 'Hittade inget hushåll med den koden'
+      : /expired|invalid/i.test(e.message) ? 'Koden stämmer inte eller har gått ut'
+      : /rate limit/i.test(e.message) ? 'För många försök – vänta en stund'
+      : e.message;
+  }
+  syncForm.busy = false;
+  renderSyncCard();
+}
+
+// ---------- Blad ----------
+function openSheet(html, onMount) {
+  const sheet = $('#sheet');
+  sheet.innerHTML = `<div class="grab"></div>${html}`;
+  sheet.hidden = false;
+  $('#sheet-backdrop').hidden = false;
+  onMount?.(sheet);
+}
+function closeSheet() {
+  $('#sheet').hidden = true;
+  $('#sheet-backdrop').hidden = true;
+  $('#sheet').innerHTML = '';
+}
+
+function chipsHtml(name, options, selected) {
+  return `<div class="chips" data-chips="${name}">${options.map(o =>
+    `<button type="button" class="chip ${String(o.value) === String(selected) ? 'on' : ''}" data-value="${esc(o.value)}">${o.label}</button>`).join('')}</div>`;
+}
+function bindChips(root, name, onPick) {
+  root.querySelector(`[data-chips="${name}"]`).addEventListener('click', e => {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    root.querySelectorAll(`[data-chips="${name}"] .chip`).forEach(c => c.classList.toggle('on', c === b));
+    onPick(b.dataset.value);
+  });
+}
+
+function quickQtyHtml(unit) {
+  return (QUICK_QTY[unit] || []).map(v => `<button type="button" class="chip" data-q="${v}">${fmtQty(v, unit)}</button>`).join('');
+}
+
+// Bladet för att lägga till en vara (befintlig katalogvara eller helt ny).
+function openAddSheet(product, newName) {
+  const isNew = !product;
+  const p = product || { name: newName.charAt(0).toUpperCase() + newName.slice(1), category: 'Övrigt', unit: 'st', place: 'kyl', shelfDays: 7 };
+  const form = {
+    qty: '', unit: p.unit, place: p.place, category: p.category,
+    bestBefore: p.shelfDays ? addDays(todayIso(), p.shelfDays) : '',
+    photoBlob: null,
+  };
+  const defaultBest = place => {
+    if (place === 'frys' && p.place !== 'frys') return addDays(todayIso(), FREEZE_DAYS);
+    return p.shelfDays ? addDays(todayIso(), p.shelfDays) : '';
+  };
+
+  openSheet(`
+    <div class="sheet-head">
+      <span class="thumb" id="add-thumb">${CATEGORY_ICON[form.category] || '📦'}</span>
+      <div><h3>${esc(p.name)}</h3><div class="sub">${isNew ? 'Ny vara' : esc(p.category)}</div></div>
+    </div>
+    ${isNew ? `<div class="field"><label for="f-cat">Kategori</label>
+      <select id="f-cat">${CATEGORIES.map(c => `<option ${c === form.category ? 'selected' : ''}>${c}</option>`).join('')}</select></div>` : ''}
+    <div class="field">
+      <label for="f-qty">Hur mycket?</label>
+      <div class="qty">
+        <button type="button" class="step" data-step="-1" aria-label="Minska">−</button>
+        <input id="f-qty" inputmode="decimal" placeholder="0" autocomplete="off">
+        <button type="button" class="step" data-step="1" aria-label="Öka">+</button>
+      </div>
+      <div class="chips small" id="f-quick" style="margin-top:10px">${quickQtyHtml(form.unit)}</div>
+    </div>
+    <div class="field"><span class="label">Enhet</span>
+      ${chipsHtml('unit', UNITS.map(u => ({ value: u, label: u })), form.unit)}</div>
+    <div class="field"><span class="label">Var?</span>
+      ${chipsHtml('place', PLACES.map(pl => ({ value: pl.id, label: `${pl.icon} ${pl.label}` })), form.place)}</div>
+    <div class="field">
+      <label for="f-best">Bäst före</label>
+      <input id="f-best" type="date" value="${form.bestBefore}">
+      <div class="chips small" id="f-best-quick" style="margin-top:10px">
+        <button type="button" class="chip" data-d="3">+3 dagar</button>
+        <button type="button" class="chip" data-d="7">+1 vecka</button>
+        <button type="button" class="chip" data-d="30">+1 månad</button>
+        <button type="button" class="chip" data-d="">Inget datum</button>
+      </div>
+    </div>
+    <div class="field"><button type="button" class="btn" id="f-photo">📷 Ta bild</button></div>
+    <button type="button" class="btn primary" id="f-save">Lägg till</button>
+  `, root => {
+    const qtyInput = root.querySelector('#f-qty');
+    const best = root.querySelector('#f-best');
+    qtyInput.focus();
+
+    root.querySelectorAll('.step').forEach(b => b.addEventListener('click', () => {
+      const cur = parseNum(qtyInput.value) || 0;
+      qtyInput.value = nf.format(Math.max(0, cur + Number(b.dataset.step) * (STEP[form.unit] || 1)));
+    }));
+    root.querySelector('#f-quick').addEventListener('click', e => {
+      const b = e.target.closest('[data-q]');
+      if (b) qtyInput.value = nf.format(Number(b.dataset.q));
+    });
+    bindChips(root, 'unit', u => { form.unit = u; root.querySelector('#f-quick').innerHTML = quickQtyHtml(u); });
+    bindChips(root, 'place', pl => { form.place = pl; best.value = defaultBest(pl); });
+    root.querySelector('#f-best-quick').addEventListener('click', e => {
+      const b = e.target.closest('[data-d]');
+      if (b) best.value = b.dataset.d ? addDays(todayIso(), Number(b.dataset.d)) : '';
+    });
+    root.querySelector('#f-cat')?.addEventListener('change', e => {
+      form.category = e.target.value;
+      root.querySelector('#add-thumb').textContent = CATEGORY_ICON[form.category] || '📦';
+    });
+    root.querySelector('#f-photo').addEventListener('click', async () => {
+      const blob = await takePhoto();
+      if (!blob) return;
+      form.photoBlob = blob;
+      const t = root.querySelector('#add-thumb');
+      t.outerHTML = `<img class="thumb" id="add-thumb" src="${URL.createObjectURL(blob)}" alt="">`;
+      root.querySelector('#f-photo').textContent = '📷 Ta om bild';
+    });
+    const save = async () => {
+      const qty = parseNum(qtyInput.value);
+      if (!(qty > 0)) { qtyInput.focus(); toast('Ange en mängd'); return; }
+      await addLot(p, isNew, { ...form, qty, bestBefore: best.value || null });
+    };
+    root.querySelector('#f-save').addEventListener('click', save);
+    qtyInput.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+  });
+}
+
+async function addLot(p, isNew, form) {
+  const now = new Date().toISOString();
+  let product = p;
+  if (isNew) {
+    product = {
+      id: uuid(), name: p.name, category: form.category, unit: form.unit, place: form.place,
+      shelfDays: form.bestBefore ? Math.max(1, daysBetween(todayIso(), form.bestBefore)) : null,
+      openDays: null, uses: 0, custom: true,
+    };
+  }
+  // Appen lär sig: senast använda enhet och plats blir standard för varan.
+  product = { ...product, unit: form.unit, place: product.place === 'frys' || form.place !== 'frys' ? form.place : product.place, uses: (product.uses || 0) + 1, updatedAt: now };
+  await db.put('products', product);
+  state.products.set(product.id, product);
+
+  let photoId = null;
+  if (form.photoBlob) photoId = await savePhoto(form.photoBlob);
+
+  const lot = {
+    id: uuid(), productId: product.id, name: product.name, category: isNew ? form.category : product.category,
+    qty: form.qty, initialQty: form.qty, unit: form.unit, place: form.place,
+    addedAt: now, bestBefore: form.bestBefore, openedAt: null, photoId,
+    status: 'active', updatedAt: now,
+  };
+  await db.put('lots', lot);
+  state.lots.push(lot);
+  await logEvent('added', lot, lot.qty);
+  closeSheet();
+  render();
+  toast(`${lot.name} tillagd · ${fmtQty(lot.qty, lot.unit)}`, { type: 'remove', lot });
+}
+
+// Bladet för en vara som finns hemma.
+function openLotSheet(lot) {
+  const product = state.products.get(lot.productId);
+  const d = daysLeft(lot);
+  const photo = lot.photoId && state.photoUrls.get(lot.photoId);
+  const countable = lot.unit === 'st' || lot.unit === 'förp';
+  const canFreeze = lot.place !== 'frys';
+  const openDays = product?.openDays;
+
+  openSheet(`
+    ${photo ? `<img class="photo-big" src="${photo}" alt="">` : ''}
+    <div class="sheet-head">
+      ${photo ? '' : thumbHtml(lot)}
+      <div style="flex:1"><h3>${esc(lot.name)}</h3>
+      <div class="sub">${fmtQty(lot.qty, lot.unit)} · ${placeLabel(lot.place)}${lot.openedAt ? ` · öppnad ${shortDate(lot.openedAt)}` : ''}</div></div>
+      ${expiryBadge(lot)}
+    </div>
+    <div class="field"><span class="label">Hur mycket finns kvar?</span>
+      <div class="left-big">
+        <button data-left="0">Slut<small>uppäten</small></button>
+        <button data-left="0.25">25 %<small>${fmtQty(roundQty(lot.qty * 0.25, lot.unit), lot.unit)}</small></button>
+        <button data-left="0.5">50 %<small>${fmtQty(roundQty(lot.qty * 0.5, lot.unit), lot.unit)}</small></button>
+        <button data-left="0.75">75 %<small>${fmtQty(roundQty(lot.qty * 0.75, lot.unit), lot.unit)}</small></button>
+      </div>
+    </div>
+    ${countable && lot.qty > 1 ? `<div class="field"><button class="btn" data-act="minus1">Ta ut 1 ${lot.unit}</button></div>` : ''}
+    <div class="btn-row">
+      ${lot.openedAt ? '' : `<button class="btn" data-act="open">Öppnad${openDays ? ` <small>(${openDays} d)</small>` : ''}</button>`}
+      ${canFreeze ? `<button class="btn" data-act="freeze">🧊 Frys in</button>` : ''}
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn danger" data-act="discard">🗑 Slängd</button>
+      <button class="btn" data-act="edit">Ändra</button>
+    </div>
+    <p class="meta">Inlagd ${shortDate(lot.addedAt.slice(0, 10))}${lot.bestBefore ? ` · bäst före ${shortDate(lot.bestBefore)}${d < 0 ? ' – lukta och smaka, mycket är ofta ätbart efter datum' : ''}` : ''}</p>
+  `, root => {
+    root.querySelector('.left-big').addEventListener('click', e => {
+      const b = e.target.closest('[data-left]');
+      if (b) setLeft(lot, Number(b.dataset.left));
+    });
+    root.querySelector('[data-act="minus1"]')?.addEventListener('click', () => updateLot(lot, { qty: lot.qty - 1 }, 'used', 1, `Tog ut 1 ${lot.unit} ${lot.name}`));
+    root.querySelector('[data-act="open"]')?.addEventListener('click', () => {
+      const changes = { openedAt: todayIso() };
+      if (openDays) {
+        const after = addDays(todayIso(), openDays);
+        if (!lot.bestBefore || after < lot.bestBefore) changes.bestBefore = after;
+      }
+      updateLot(lot, changes, 'opened', 0, changes.bestBefore ? `Öppnad – håller till ${shortDate(changes.bestBefore)}` : `${lot.name} markerad som öppnad`);
+    });
+    root.querySelector('[data-act="freeze"]')?.addEventListener('click', () =>
+      updateLot(lot, { place: 'frys', bestBefore: addDays(todayIso(), FREEZE_DAYS) }, 'frozen', 0, `${lot.name} infryst · håller till ${shortDate(addDays(todayIso(), FREEZE_DAYS))}`));
+    root.querySelector('[data-act="discard"]').addEventListener('click', () =>
+      updateLot(lot, { qty: 0, status: 'discarded' }, 'discarded', lot.qty, `${lot.name} slängd`));
+    root.querySelector('[data-act="edit"]').addEventListener('click', () => openEditSheet(lot));
+  });
+}
+
+function setLeft(lot, fraction) {
+  if (fraction === 0) {
+    updateLot(lot, { qty: 0, status: 'used' }, 'used', lot.qty, `${lot.name} slut`);
+    return;
+  }
+  const qty = roundQty(lot.qty * fraction, lot.unit) || lot.qty * fraction;
+  updateLot(lot, { qty }, 'used', lot.qty - qty, `${lot.name}: ${fmtQty(qty, lot.unit)} kvar`);
+}
+
+function openEditSheet(lot) {
+  const form = { unit: lot.unit, place: lot.place, photoBlob: null };
+  openSheet(`
+    <div class="sheet-head">${thumbHtml(lot)}<div><h3>Ändra ${esc(lot.name)}</h3></div></div>
+    <div class="field"><label for="e-qty">Mängd</label>
+      <div class="qty"><input id="e-qty" inputmode="decimal" value="${nf.format(lot.qty)}"></div></div>
+    <div class="field"><span class="label">Enhet</span>${chipsHtml('unit', UNITS.map(u => ({ value: u, label: u })), lot.unit)}</div>
+    <div class="field"><span class="label">Var?</span>${chipsHtml('place', PLACES.map(pl => ({ value: pl.id, label: `${pl.icon} ${pl.label}` })), lot.place)}</div>
+    <div class="field"><label for="e-best">Bäst före</label><input id="e-best" type="date" value="${lot.bestBefore || ''}"></div>
+    <div class="field"><button type="button" class="btn" id="e-photo">📷 ${lot.photoId ? 'Ta om bild' : 'Ta bild'}</button></div>
+    <button class="btn primary" id="e-save">Spara</button>
+    <div style="height:8px"></div>
+    <button class="btn danger" id="e-delete">Ta bort (felinlagd)</button>
+  `, root => {
+    bindChips(root, 'unit', u => form.unit = u);
+    bindChips(root, 'place', p => form.place = p);
+    root.querySelector('#e-photo').addEventListener('click', async () => {
+      const blob = await takePhoto();
+      if (blob) { form.photoBlob = blob; root.querySelector('#e-photo').textContent = '📷 Bild vald'; }
+    });
+    root.querySelector('#e-save').addEventListener('click', async () => {
+      const qty = parseNum(root.querySelector('#e-qty').value);
+      if (!(qty >= 0)) { toast('Ange en mängd'); return; }
+      const changes = { qty, unit: form.unit, place: form.place, bestBefore: root.querySelector('#e-best').value || null };
+      if (form.photoBlob) changes.photoId = await savePhoto(form.photoBlob);
+      if (qty === 0) changes.status = 'used';
+      updateLot(lot, changes, 'edited', 0, `${lot.name} uppdaterad`);
+    });
+    root.querySelector('#e-delete').addEventListener('click', () =>
+      updateLot(lot, { qty: 0, status: 'removed', deleted: true }, 'removed', 0, `${lot.name} borttagen`));
+  });
+}
+
+async function updateLot(lot, changes, eventType, delta, message) {
+  const before = { ...lot };
+  const updated = { ...lot, ...changes, updatedAt: new Date().toISOString() };
+  if (updated.qty <= 0 && updated.status === 'active') updated.status = 'used';
+  await db.put('lots', updated);
+  state.lots = state.lots.filter(l => l.id !== lot.id);
+  if (updated.status === 'active') state.lots.push(updated);
+  const ev = await logEvent(eventType, updated, delta);
+  closeSheet();
+  render();
+  toast(message, { type: 'restore', before, eventId: ev.id });
+}
+
+async function logEvent(type, lot, delta) {
+  const ev = {
+    id: uuid(), ts: new Date().toISOString(), type,
+    lotId: lot.id, productId: lot.productId, name: lot.name, unit: lot.unit, delta,
+  };
+  ev.updatedAt = ev.ts;
+  await db.put('events', ev);
+  return ev;
+}
+
+// Händelser raderas mjukt så att raderingen också når den andra telefonen.
+async function deleteEvent(id) {
+  const ev = await db.get('events', id);
+  if (ev) await db.put('events', { ...ev, deleted: true, updatedAt: new Date().toISOString() });
+}
+
+// ---------- Ångra ----------
+async function undo() {
+  const u = state.undo;
+  if (!u) return;
+  state.undo = null;
+  if (u.type === 'remove') {
+    const removed = { ...u.lot, status: 'removed', deleted: true, updatedAt: new Date().toISOString() };
+    await db.put('lots', removed);
+    state.lots = state.lots.filter(l => l.id !== u.lot.id);
+    const evs = await db.all('events');
+    const ev = evs.find(e => e.lotId === u.lot.id && e.type === 'added');
+    if (ev) await deleteEvent(ev.id);
+  } else {
+    const restored = { ...u.before, updatedAt: new Date().toISOString() };
+    await db.put('lots', restored);
+    state.lots = state.lots.filter(l => l.id !== restored.id);
+    if (restored.status === 'active') state.lots.push(restored);
+    if (u.eventId) await deleteEvent(u.eventId);
+  }
+  hideToast();
+  render();
+}
+
+let toastTimer = null;
+function toast(message, undoInfo) {
+  const el = $('#toast');
+  state.undo = undoInfo || null;
+  el.innerHTML = `<span>${esc(message)}</span>${undoInfo ? '<button id="undo">Ångra</button>' : ''}`;
+  el.hidden = false;
+  el.querySelector('#undo')?.addEventListener('click', undo);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, undoInfo ? 6000 : 2500);
+}
+function hideToast() { $('#toast').hidden = true; state.undo = null; }
+
+// ---------- Bilder ----------
+function takePhoto() {
+  return new Promise(resolve => {
+    const input = $('#photo-input');
+    input.value = '';
+    input.onchange = async () => {
+      const file = input.files[0];
+      resolve(file ? await compressImage(file) : null);
+    };
+    input.click();
+  });
+}
+
+async function compressImage(file, max = 1024) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    return await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8));
+  } catch {
+    return file;
+  }
+}
+
+async function savePhoto(blob) {
+  const id = uuid();
+  await db.put('photos', { id, blob, updatedAt: new Date().toISOString() });
+  state.photoUrls.set(id, URL.createObjectURL(blob));
+  Sync.queuePhoto(id);
+  return id;
+}
+
+// ---------- Säkerhetskopia ----------
+const blobToDataUrl = blob => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+
+async function exportData() {
+  const photos = await db.all('photos');
+  const data = {
+    app: 'hemma', version: 1, exportedAt: new Date().toISOString(),
+    products: (await db.all('products')).filter(p => p.custom || p.uses),
+    lots: await db.all('lots'),
+    events: await db.all('events'),
+    photos: await Promise.all(photos.map(async p => ({ id: p.id, data: await blobToDataUrl(p.blob) }))),
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `hemma-${todayIso()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function importData(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== 'hemma') throw new Error('fel fil');
+    // Slå ihop: den nyaste versionen av varje post vinner.
+    for (const store of ['products', 'lots', 'events']) {
+      const existing = new Map((await db.all(store)).map(x => [x.id, x]));
+      const merged = (data[store] || []).filter(x => !existing.has(x.id) || (x.updatedAt || x.ts) > (existing.get(x.id).updatedAt || existing.get(x.id).ts));
+      await db.putMany(store, merged);
+    }
+    for (const p of data.photos || []) {
+      const blob = await (await fetch(p.data)).blob();
+      await db.put('photos', { id: p.id, blob, updatedAt: new Date().toISOString() });
+      Sync.queuePhoto(p.id);
+    }
+    await load();
+    render();
+    toast('Kopian är inläst');
+  } catch (e) {
+    toast('Kunde inte läsa filen');
+  }
+}
+
+// ---------- Start ----------
+async function load() {
+  const products = await db.all('products');
+  state.products = new Map(products.map(p => [p.id, p]));
+  // Lägg in katalogvaror som saknas (deterministiska id:n så att två telefoner får samma).
+  const missing = CATALOG.filter(c => !state.products.has('cat:' + slug(c.name)))
+    .map(c => ({ ...c, id: 'cat:' + slug(c.name), uses: 0, custom: false, updatedAt: '2026-01-01T00:00:00.000Z' }));
+  if (missing.length) {
+    await db.putMany('products', missing, { silent: true });
+    for (const p of missing) state.products.set(p.id, p);
+  }
+  state.lots = (await db.all('lots')).filter(l => l.status === 'active' && !l.deleted);
+  for (const ph of await db.all('photos')) {
+    if (!state.photoUrls.has(ph.id)) state.photoUrls.set(ph.id, URL.createObjectURL(ph.blob));
+  }
+}
+
+function bind() {
+  const q = $('#q');
+  q.addEventListener('input', () => {
+    state.active = 0;
+    $('#q-clear').hidden = !q.value;
+    renderSuggest();
+    if (state.view === 'stock') renderStock();
+  });
+  q.addEventListener('focus', () => { if (q.value) renderSuggest(); });
+  q.addEventListener('keydown', e => {
+    const n = state.suggestions.filter(s => s.type !== 'head').length;
+    if (e.key === 'ArrowDown') { state.active = (state.active + 1) % n; renderSuggest(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { state.active = (state.active - 1 + n) % n; renderSuggest(); e.preventDefault(); }
+    else if (e.key === 'Enter') { pickSuggestion(state.active); e.preventDefault(); }
+    else if (e.key === 'Escape') clearQuery();
+  });
+  $('#q-clear').addEventListener('click', () => { clearQuery(); });
+  // Förhindra att fältet tappar fokus (och listan stängs) innan klicket hinner registreras.
+  $('#suggest').addEventListener('pointerdown', e => e.preventDefault());
+  $('#suggest').addEventListener('mousedown', e => e.preventDefault());
+  $('#suggest').addEventListener('click', e => {
+    const li = e.target.closest('li[data-k]');
+    if (li) pickSuggestion(Number(li.dataset.k));
+  });
+  document.addEventListener('pointerdown', e => {
+    if (!e.target.closest('.top')) $('#suggest').hidden = true;
+  });
+
+  document.querySelector('.tabs').addEventListener('click', e => {
+    const b = e.target.closest('button[data-view]');
+    if (!b) return;
+    state.view = b.dataset.view;
+    render();
+    window.scrollTo(0, 0);
+  });
+  document.querySelector('main').addEventListener('click', e => {
+    const row = e.target.closest('[data-lot]');
+    if (row) { const lot = state.lots.find(l => l.id === row.dataset.lot); if (lot) openLotSheet(lot); return; }
+    const place = e.target.closest('[data-place]');
+    if (place) { state.stockPlace = place.dataset.place; renderStock(); return; }
+    const sa = e.target.closest('[data-sync]');
+    if (sa) { e.preventDefault(); syncAction(sa.dataset.sync); return; }
+    const act = e.target.closest('[data-action]');
+    if (act?.dataset.action === 'export') exportData();
+    if (act?.dataset.action === 'import') {
+      const input = $('#import-input');
+      input.onchange = () => input.files[0] && importData(input.files[0]);
+      input.click();
+    }
+  });
+  $('#sheet-backdrop').addEventListener('click', closeSheet);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
+  // Datumen räknas om när appen kommer tillbaka från bakgrunden (t.ex. nästa morgon).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+}
+
+(async function init() {
+  bind();
+  await load();
+  render();
+  // Ändringar från den andra telefonen: läs om och rita om, men stör inte ett öppet blad.
+  await Sync.init(async () => {
+    await load();
+    if ($('#sheet').hidden) render();
+  });
+  Sync.on(() => renderSyncCard());
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();

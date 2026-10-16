@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Hemma</title>
+  <meta name="description" content="Inventering av maten hemma">
+  <meta name="theme-color" content="#2f6b4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Hemma">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1 id="title">Ät först</h1>
+    <div class="search">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4a6.5 6.5 0 1 0 4 11.6l4.4 4.4 1.4-1.4-4.4-4.4A6.5 6.5 0 0 0 10.5 4Zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"/></svg>
+      <input id="q" type="search" placeholder="Lägg till eller sök vara…" autocomplete="off" autocapitalize="sentences" enterkeyhint="go">
+      <button id="q-clear" class="icon-btn" aria-label="Rensa" hidden>×</button>
+    </div>
+    <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+  </header>
+
+  <main>
+    <section id="view-home" class="view"></section>
+    <section id="view-stock" class="view" hidden></section>
+    <section id="view-more" class="view" hidden></section>
+  </main>
+
+  <nav class="tabs">
+    <button data-view="home" class="active">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 5v4.6l3.5 2.1-1 1.7L11 12.7V7h2Z"/></svg>
+      <span>Ät först</span>
+    </button>
+    <button data-view="stock">
+      <svg viewBox="0 0 24 24"><path d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm1 2v6h14V5H5Zm0 8v6h14v-6H5Zm2-6h4v2H7V7Zm0 8h4v2H7v-2Z"/></svg>
+      <span>Lager</span>
+    </button>
+    <button data-view="more">
+      <svg viewBox="0 0 24 24"><path d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
+      <span>Mer</span>
+    </button>
+  </nav>
+
+  <div id="sheet-backdrop" class="backdrop" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <input id="photo-input" type="file" accept="image/*" capture="environment" hidden>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="catalog.js"></script>
+  <script src="db.js"></script>
+  <script src="sync.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
