@@ -13,16 +13,109 @@ function analyzeRecipe(recipe, scale = 1) {
   const products = [...state.products.values()];
   const stocked = stockedProductIds();
   return recipe.ingredients.map((ing, i) => {
-    const product = matchProduct(ing, products, stocked);
+    // En koppling man själv valt går före den automatiska.
+    const alias = aliasFor(ing, products);
+    const ignored = alias?.id === IGNORE_ID || (!alias && ing.alts.every(a => NOT_STOCK.test(norm(a))));
+    const product = ignored ? null : alias || matchProduct(ing, products, stocked);
     const lots = product ? state.lots.filter(l => l.productId === product.id).sort(sortByExpiry) : [];
     const need = ing.qty != null ? ing.qty * scale : null;
-    return { i, ing, product, lots, need };
+    return { i, ing, product, lots, need, ignored, manual: !!alias };
   });
 }
 
 function coverage(rows) {
-  const counted = rows.filter(r => r.product);
-  return { have: counted.filter(r => r.lots.length).length, total: rows.length };
+  const counted = rows.filter(r => !r.ignored);
+  return { have: counted.filter(r => r.lots.length).length, total: counted.length };
+}
+
+// ---------- Välj vara för en ingrediens ----------
+async function setAlias(ing, productId) {
+  const keys = ing.alts.map(a => norm(a));
+  const now = new Date().toISOString();
+  // Ta bort kopplingen från varor som hade den tidigare.
+  for (const p of state.products.values()) {
+    if (p.aliases?.some(a => keys.includes(a))) {
+      const updated = { ...p, aliases: p.aliases.filter(a => !keys.includes(a)), updatedAt: now };
+      await db.put('products', updated);
+      state.products.set(p.id, updated);
+    }
+  }
+  if (!productId) return;
+  let target = state.products.get(productId);
+  if (!target && productId === IGNORE_ID) {
+    target = { id: IGNORE_ID, name: 'Behövs inte i lagret', category: 'Övrigt', unit: 'st', place: 'skafferi', hidden: true, aliases: [] };
+  }
+  const updated = { ...target, aliases: [...new Set([...(target.aliases || []), norm(ing.name)])], updatedAt: now };
+  await db.put('products', updated);
+  state.products.set(updated.id, updated);
+}
+
+function openIngredientPicker(recipe, servings, row) {
+  const ing = row.ing;
+  const ingWords = norm(ing.name).split(/\s+/).filter(w => w.length >= 3);
+  // Gissa vilka varor som ligger närmast: "rödvin" → "Rött vin" (samma början, och "vin" ingår).
+  const scoreFor = name => {
+    const words = norm(name).split(/\s+/);
+    let s = Math.max(0, ...ing.alts.map(a => productScore(a, { name })), ...ingWords.map(w => matchScore(name, w)));
+    for (const iw of ingWords) for (const w of words) {
+      let k = 0;
+      while (k < iw.length && k < w.length && iw[k] === w[k]) k++;
+      if (k >= 2) s += k * 3;
+      if (w.length >= 3 && iw !== w && iw.includes(w)) s += 15;
+    }
+    return s;
+  };
+
+  const draw = q => {
+    const nq = norm(q);
+    const lots = state.lots
+      .map(l => ({ l, s: nq ? matchScore(l.name, nq) : scoreFor(l.name) }))
+      .filter(x => !nq || x.s > 0)
+      .sort((a, b) => b.s - a.s || a.l.name.localeCompare(b.l.name, 'sv'));
+    const seen = new Set(lots.map(x => x.l.productId));
+    const prods = nq ? [...state.products.values()]
+      .filter(p => !p.deleted && !p.hidden && !seen.has(p.id))
+      .map(p => ({ p, s: matchScore(p.name, nq) })).filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s).slice(0, 8) : [];
+    return `
+      ${lots.length ? `<div class="group"><h2>Finns hemma</h2></div><div class="list">${lots.map(({ l }) => `
+        <button class="row" data-pick="${esc(l.productId)}">${thumbHtml(l)}
+          <div class="r-main"><div class="r-name">${esc(l.name)}</div><div class="r-sub">${fmtQty(l.qty, l.unit)} · ${placeLabel(l.place)}</div></div>
+        </button>`).join('')}</div>` : ''}
+      ${prods.length ? `<div class="group"><h2>Alla varor</h2></div><div class="list">${prods.map(({ p }) => `
+        <button class="row" data-pick="${esc(p.id)}"><span class="thumb">${CATEGORY_ICON[p.category] || '📦'}</span>
+          <div class="r-main"><div class="r-name">${esc(p.name)}</div><div class="r-sub">Finns inte hemma just nu</div></div>
+        </button>`).join('')}</div>` : ''}
+      ${!lots.length && !prods.length ? `<p class="meta">Ingen vara matchar. Skriv ett annat namn.</p>` : ''}`;
+  };
+
+  openSheet(`<div id="picker">
+    <div class="sheet-head"><div><h3>Vad är ”${esc(ing.name)}”?</h3>
+      <div class="sub">Valet sparas och används i alla recept framöver</div></div></div>
+    <div class="field"><input id="pick-q" type="search" placeholder="Sök vara, t.ex. vin" autocomplete="off"></div>
+    <div id="pick-list">${draw('')}</div>
+    <div style="height:12px"></div>
+    <button class="btn" data-pick="${IGNORE_ID}">Behövs inte i lagret (t.ex. vatten)</button>
+    ${row.manual ? `<div style="height:8px"></div><button class="btn danger" data-unpick>Ta bort min koppling</button>` : ''}
+    <div style="height:8px"></div>
+    <button class="btn" data-back>Tillbaka</button>
+  </div>`, root => {
+    const list = root.querySelector('#pick-list');
+    root.querySelector('#pick-q').addEventListener('input', e => { list.innerHTML = draw(e.target.value); });
+    // Lyssna på innehållet, inte på bladet självt – bladet återanvänds och skulle samla lyssnare.
+    root.querySelector('#picker').addEventListener('click', async e => {
+      const pick = e.target.closest('[data-pick]');
+      if (pick) {
+        await setAlias(ing, pick.dataset.pick);
+        const name = pick.dataset.pick === IGNORE_ID ? 'behövs inte i lagret' : state.products.get(pick.dataset.pick)?.name;
+        openRecipeSheet(recipe, servings);
+        toast(`”${ing.name}” = ${name}`);
+        return;
+      }
+      if (e.target.closest('[data-unpick]')) { await setAlias(ing, null); openRecipeSheet(recipe, servings); return; }
+      if (e.target.closest('[data-back]')) openRecipeSheet(recipe, servings);
+    });
+  });
 }
 
 function fmtNeed(qty, unit) {
@@ -97,13 +190,14 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
   const rowHtml = r => {
     const home = r.lots.length;
     const total = r.lots.reduce((s, l) => s + l.qty, 0);
-    const sub = !r.product ? (r.ing.alts.every(a => NOT_STOCK.test(norm(a))) ? 'Behövs inte i lagret' : 'Hittar ingen matchande vara')
+    const sub = r.ignored ? 'Behövs inte i lagret'
+      : !r.product ? 'Hittar ingen vara – tryck för att välja'
       : home ? `Hemma: ${fmtQty(Math.round(total * 100) / 100, r.lots[0].unit)} ${esc(r.product.name.toLowerCase())} · ${placeLabel(r.lots[0].place)}`
-      : `Saknas hemma (${esc(r.product.name)})`;
-    return `<div class="ing ${home ? 'have' : r.product ? 'miss' : 'unknown'}">
-      <span class="ing-mark">${home ? '✓' : r.product ? '✕' : '?'}</span>
+      : `Saknas hemma (${esc(r.product.name)}) – tryck för att välja annan`;
+    return `<button type="button" class="ing ${home ? 'have' : r.ignored ? 'ignored' : r.product ? 'miss' : 'unknown'}" data-ing="${r.i}">
+      <span class="ing-mark">${home ? '✓' : r.ignored ? '–' : r.product ? '✕' : '?'}</span>
       <div class="ing-main"><div>${r.need != null ? `<b>${fmtNeed(r.need, /klyft/i.test(r.ing.name) ? 'st' : r.ing.unit)}</b> ` : ''}${esc(r.ing.name)}</div>
-      <div class="ing-sub">${sub}</div></div></div>`;
+      <div class="ing-sub">${sub}</div></div><span class="ing-edit" aria-hidden="true">›</span></button>`;
   };
 
   openSheet(`
@@ -127,6 +221,10 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
       openRecipeSheet(recipe, next);
     }));
     root.querySelector('[data-cook]').addEventListener('click', () => openCookSheet(recipe, servings));
+    root.querySelector('.ings').addEventListener('click', e => {
+      const b = e.target.closest('[data-ing]');
+      if (b) openIngredientPicker(recipe, servings, rows[Number(b.dataset.ing)]);
+    });
     root.querySelector('[data-del-recipe]').addEventListener('click', async () => {
       const del = { ...recipe, deleted: true, updatedAt: new Date().toISOString() };
       await db.put('recipes', del);

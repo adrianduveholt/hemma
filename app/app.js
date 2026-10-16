@@ -143,7 +143,7 @@ function search(qRaw) {
   }
 
   const prods = [...state.products.values()]
-    .filter(p => !p.deleted)
+    .filter(p => !p.deleted && !p.hidden)
     .map(p => ({ p, s: matchScore(p.name, q) }))
     .filter(x => x.s > 0)
     .map(x => ({ ...x, s: x.s + Math.min((x.p.uses || 0) * 4, 30) }))

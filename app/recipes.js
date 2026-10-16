@@ -128,12 +128,25 @@ function productScore(ingName, product) {
   return 0;
 }
 
+// Kopplingar man valt själv sparas som alias på varan (synkas med varorna).
+// IGNORE_ID är en dold vara som samlar ingredienser som aldrig finns i lagret.
+const IGNORE_ID = 'ignore';
+
+function aliasFor(ing, products) {
+  for (const alt of ing.alts) {
+    const key = norm(alt);
+    const p = products.find(x => !x.deleted && x.aliases?.includes(key));
+    if (p) return p;
+  }
+  return null;
+}
+
 function matchProduct(ing, products, stockedIds) {
   let best = null, bestScore = 0;
   if (ing.alts.every(a => NOT_STOCK.test(norm(a)))) return null;
   for (const alt of ing.alts) {
     for (const p of products) {
-      if (p.deleted) continue;
+      if (p.deleted || p.hidden) continue;
       let s = productScore(alt, p);
       if (!s) continue;
       if (stockedIds.has(p.id)) s += 20; // Hellre en vara som faktiskt finns hemma.
