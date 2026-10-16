@@ -209,6 +209,7 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
     ${recipe.image ? `<img class="photo-big" src="${esc(recipe.image)}" alt="">` : ''}
     <div class="sheet-head"><div style="flex:1"><h3>${esc(recipe.title)}</h3>
       <div class="sub">${c.have} av ${c.total} ingredienser hemma</div></div></div>
+    ${recipe.description ? `<p class="meta">${esc(recipe.description)}</p>` : ''}
     ${recipe.servings ? `<div class="field"><span class="label">${esc(recipe.servingsLabel)}</span>
       <div class="qty"><button class="step" data-serv="-1" aria-label="Färre">−</button>
       <input id="r-serv" value="${servings}" inputmode="numeric" readonly>

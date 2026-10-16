@@ -78,7 +78,7 @@ async function addFromSearch(product, newName) {
 }
 
 // Det som saknas till ett recept (eller inte räcker) läggs på listan.
-async function addMissingFromRecipe(recipe, servings) {
+async function addMissingFromRecipe(recipe, servings, { silent = false } = {}) {
   const scale = recipe.servings && servings ? servings / recipe.servings : 1;
   let n = 0;
   for (const r of analyzeRecipe(recipe, scale)) {
@@ -95,11 +95,14 @@ async function addMissingFromRecipe(recipe, servings) {
       const conv = convertQty(qty, 'st', r.product.unit, r.product.name);
       if (conv != null) { qty = conv; unit = r.product.unit; }
     }
+    // Förbrukningsvaror handlas som en förpackning – "3 msk vetemjöl" på listan hjälper ingen.
+    if (isStaple(r.product)) { qty = null; unit = r.product.unit; }
     await addShopping({ product: r.product, name: r.ing.name, qty: qty != null ? roundQty(qty, unit) || qty : null, unit, note: recipe.title, source: 'recipe', recipeId: recipe.id });
     n++;
   }
   updateShopBadge();
-  toast(n ? `${n} ${n === 1 ? 'vara' : 'varor'} på inköpslistan` : 'Allt finns redan hemma');
+  if (!silent) toast(n ? `${n} ${n === 1 ? 'vara' : 'varor'} på inköpslistan` : 'Allt finns redan hemma');
+  return n;
 }
 
 // När en vara läggs in i lagret på vanligt sätt stryks den från listan.

@@ -124,11 +124,13 @@ function openAiExport() {
 // AI:n ombeds avsluta med ett ```hemma-block med JSON. Vi läser det, och faller tillbaka på
 // en enkel tolkning av vanlig text (rubriken "Inköpslista" följd av punkter).
 
-const AI_FORMAT = `Avsluta svaret med ett kodblock som börjar med \`\`\`hemma och innehåller JSON i exakt detta format, så att jag kan importera det i min app:
+const AI_FORMAT = `Svara i två delar:
+1. Först förslagen som vanlig läsbar text: för varje rätt en mening om vad det är, vilka av våra varor den använder och vad som behöver handlas.
+2. Sist, som bilaga efter förslagen, ett kodblock som börjar med \`\`\`hemma med samma recept som JSON i exakt detta format (jag importerar det i min app och väljer själv vilka jag vill laga):
 \`\`\`hemma
-{"recept":[{"namn":"Pasta med torsk","portioner":4,"ingredienser":["400 g torskrygg","2 dl matlagningsgrädde"],"gor_sa_har":["Koka pastan.","Stek torsken."]}],"inkopslista":["1 burk krossade tomater"]}
+{"recept":[{"namn":"Pasta med torsk","beskrivning":"Krämig pasta som tar vara på torsken.","portioner":4,"ingredienser":["400 g torskrygg","2 dl matlagningsgrädde"],"gor_sa_har":["Koka pastan.","Stek torsken."]}]}
 \`\`\`
-Skriv ingredienser som mängd, enhet och vara, t.ex. "2 dl grädde". Inköpslistan ska bara innehålla det som saknas hemma.`;
+Skriv ingredienser som mängd, enhet och vara, t.ex. "2 dl grädde". Hoppa inte över del 1.`;
 
 const AI_REFORMAT = `Kan du skriva om dina förslag ovan i det här formatet?\n\n${AI_FORMAT}`;
 
@@ -147,6 +149,7 @@ function parseAiReply(text) {
     try { data = JSON.parse(c.trim()); } catch { continue; }
     const recipes = [].concat(pick(data, 'recept', 'recipes') || []).map(r => ({
       title: String(pick(r, 'namn', 'name', 'title') || 'AI-recept'),
+      description: String(pick(r, 'beskrivning', 'description') || ''),
       servings: Number(pick(r, 'portioner', 'servings')) || null,
       ingredients: [].concat(pick(r, 'ingredienser', 'ingredients') || []).map(String),
       steps: [].concat(pick(r, 'gor_sa_har', 'gör_så_här', 'steg', 'steps', 'instructions') || []).map(String),
@@ -172,7 +175,7 @@ function aiRecipeToRecipe(r) {
   const now = new Date().toISOString();
   return {
     id: 'ai:' + uuid(), url: null, source: 'ai', title: r.title, image: null,
-    servings: r.servings, servingsLabel: 'portioner',
+    servings: r.servings, servingsLabel: 'portioner', description: r.description || '',
     ingredients: r.ingredients.map(t => parseIngredient(t)),
     steps: r.steps, addedAt: now, updatedAt: now,
   };
@@ -201,17 +204,30 @@ function openAiImport() {
           <button class="btn" data-imp="reformat">Kopiera formatfråga</button>`;
         return;
       }
+      parsed.converted = recipes.map(aiRecipeToRecipe);
       preview.innerHTML = `
-        ${recipes.length ? `<div class="group"><h2>Recept</h2><span class="count">${recipes.length}</span></div>
-          <div class="cook">${recipes.map((r, k) => `<label class="cook-row"><input type="checkbox" data-r="${k}" checked>
-            <div class="ing-main"><div>${esc(r.title)}</div><div class="ing-sub">${r.ingredients.length} ingredienser${r.servings ? ` · ${r.servings} portioner` : ''}</div></div></label>`).join('')}</div>` : ''}
-        ${shopping.length ? `<div class="group"><h2>Till inköpslistan</h2><span class="count">${shopping.length}</span></div>
+        ${recipes.length ? `<div class="group"><h2>Välj vad ni vill laga</h2><span class="count">${recipes.length}</span></div>
+          <div class="cook">${parsed.converted.map((r, k) => {
+            const c = coverage(analyzeRecipe(r));
+            return `<label class="cook-row"><input type="checkbox" data-r="${k}">
+            <div class="ing-main"><div>${esc(r.title)}</div><div class="ing-sub">${r.description ? `${esc(r.description)} · ` : ''}${c.have} av ${c.total} hemma${r.servings ? ` · ${r.servings} portioner` : ''}</div></div></label>`;
+          }).join('')}</div>
+          <div class="field"><label class="check-line"><input type="checkbox" id="ai-missing" checked>
+            <span>Lägg det som saknas för de valda recepten på inköpslistan</span></label></div>` : ''}
+        ${shopping.length && !recipes.length ? `<div class="group"><h2>Till inköpslistan</h2><span class="count">${shopping.length}</span></div>
           <div class="cook">${shopping.map((s, k) => `<label class="cook-row"><input type="checkbox" data-s="${k}" checked>
             <div class="ing-main"><div>${esc(s)}</div></div></label>`).join('')}</div>` : ''}
         ${!structured ? `<p class="meta">Svaret saknade Hemma-formatet, så bara inköpslistan kunde läsas. Vill du ha med recepten:
           <a href="#" data-imp="reformat">kopiera formatfrågan</a> och klistra in den i chatten.</p>` : ''}
         <div style="height:12px"></div>
-        <button class="btn primary" data-imp="go">Importera</button>`;
+        <button class="btn primary" data-imp="go" ${recipes.length ? 'disabled' : ''}>${recipes.length ? 'Välj minst ett recept' : 'Lägg på inköpslistan'}</button>`;
+      // Knappen säger hur många recept som är valda.
+      preview.querySelectorAll('[data-r]').forEach(cb => cb.addEventListener('change', () => {
+        const n = preview.querySelectorAll('[data-r]:checked').length;
+        const go = preview.querySelector('[data-imp="go"]');
+        go.disabled = !n;
+        go.textContent = n ? `Importera ${n} recept` : 'Välj minst ett recept';
+      }));
     };
 
     root.querySelector('#ai-import').addEventListener('click', async e => {
@@ -228,9 +244,15 @@ function openAiImport() {
         catch { toast('Kunde inte kopiera'); }
       }
       if (act === 'go' && parsed) {
-        const recipes = parsed.recipes.filter((_, k) => root.querySelector(`[data-r="${k}"]`)?.checked).map(aiRecipeToRecipe);
-        const items = parsed.shopping.filter((_, k) => root.querySelector(`[data-s="${k}"]`)?.checked);
-        for (const r of recipes) { await db.put('recipes', r); state.recipes.push(r); }
+        const recipes = (parsed.converted || []).filter((_, k) => root.querySelector(`[data-r="${k}"]`)?.checked);
+        const items = recipes.length ? [] : parsed.shopping.filter((_, k) => root.querySelector(`[data-s="${k}"]`)?.checked);
+        const addMissing = root.querySelector('#ai-missing')?.checked;
+        const before = openItems().length;
+        for (const r of recipes) {
+          await db.put('recipes', r);
+          state.recipes.push(r);
+          if (addMissing) await addMissingFromRecipe(r, r.servings, { silent: true });
+        }
         const products = [...state.products.values()];
         const stocked = stockedProductIds();
         for (const text of items) {
@@ -243,7 +265,8 @@ function openAiImport() {
         updateShopBadge();
         const parts = [];
         if (recipes.length) parts.push(`${recipes.length} recept`);
-        if (items.length) parts.push(`${items.length} på inköpslistan`);
+        const added = openItems().length - before;
+        if (added) parts.push(`${added} nya på inköpslistan`);
         toast(`Importerat: ${parts.join(' och ')}`);
       }
     });
