@@ -463,6 +463,8 @@ function openSheet(html, onMount) {
   onMount?.(sheet);
 }
 function closeSheet() {
+  state.afterAdd = null;
+  state.pendingBarcode = null;
   $('#sheet').hidden = true;
   $('#sheet-backdrop').hidden = true;
   $('#sheet').innerHTML = '';
@@ -486,11 +488,17 @@ function quickQtyHtml(unit) {
 }
 
 // Bladet för att lägga till en vara (befintlig katalogvara eller helt ny).
-function openAddSheet(product, newName) {
+// prefill: { qty, unit } från en skannad förpackning.
+function openAddSheet(product, newName, prefill = {}) {
   const isNew = !product;
   const p = product || { name: newName.charAt(0).toUpperCase() + newName.slice(1), category: 'Övrigt', unit: 'st', place: 'kyl', shelfDays: 7 };
+  // Förpackningens enhet till appens: 500 ml → 5 dl, 33 cl → 3,3 dl.
+  let preQty = prefill.qty || null, preUnit = prefill.unit || null;
+  if (preUnit === 'ml') { preQty = preQty / 100; preUnit = 'dl'; }
+  if (preUnit === 'cl') { preQty = preQty / 10; preUnit = 'dl'; }
+  if (preUnit && !UNITS.includes(preUnit)) preUnit = null;
   const form = {
-    qty: '', unit: p.unit, place: p.place, category: p.category,
+    qty: '', unit: (isNew && preUnit) || p.unit, place: p.place, category: p.category,
     bestBefore: p.shelfDays ? addDays(todayIso(), p.shelfDays) : '',
     photoBlob: null,
   };
@@ -510,7 +518,7 @@ function openAddSheet(product, newName) {
       <label for="f-qty">Hur mycket?</label>
       <div class="qty">
         <button type="button" class="step" data-step="-1" aria-label="Minska">−</button>
-        <input id="f-qty" inputmode="decimal" placeholder="0" autocomplete="off">
+        <input id="f-qty" inputmode="decimal" placeholder="0" autocomplete="off" value="${preQty ? nf.format(Math.round(preQty * 100) / 100) : ''}">
         <button type="button" class="step" data-step="1" aria-label="Öka">+</button>
       </div>
       <div class="chips small" id="f-quick" style="margin-top:10px">${quickQtyHtml(form.unit)}</div>
@@ -534,7 +542,8 @@ function openAddSheet(product, newName) {
   `, root => {
     const qtyInput = root.querySelector('#f-qty');
     const best = root.querySelector('#f-best');
-    qtyInput.focus();
+    // Med mängden ifylld från förpackningen räcker det att trycka Lägg till – inget tangentbord i vägen.
+    if (!preQty) qtyInput.focus();
 
     root.querySelectorAll('.step').forEach(b => b.addEventListener('click', () => {
       const cur = parseNum(qtyInput.value) || 0;
@@ -586,6 +595,8 @@ async function addLot(p, isNew, form) {
   product = { ...product, unit: form.unit, place: product.place === 'frys' || form.place !== 'frys' ? form.place : product.place, uses: (product.uses || 0) + 1, updatedAt: now };
   await db.put('products', product);
   state.products.set(product.id, product);
+  const pending = state.pendingBarcode;
+  if (pending) product = (await rememberBarcode(product, pending.code, pending.off)).product;
 
   let photoId = null;
   if (form.photoBlob) photoId = await savePhoto(form.photoBlob);
@@ -600,9 +611,11 @@ async function addLot(p, isNew, form) {
   state.lots.push(lot);
   await logEvent('added', lot, lot.qty);
   await shopOnStocked(product.id);
+  const after = state.afterAdd;
   closeSheet();
   render();
   toast(`${lot.name} tillagd · ${fmtQty(lot.qty, lot.unit)}`, { type: 'remove', lot });
+  after?.(lot);
 }
 
 // Bladet för en vara som finns hemma.
@@ -894,6 +907,7 @@ function bind() {
     else if (e.key === 'Escape') clearQuery();
   });
   $('#q-clear').addEventListener('click', () => { clearQuery(); });
+  $('#scan-btn').addEventListener('click', () => { scanner.count = 0; openScanner(); });
   // Förhindra att fältet tappar fokus (och listan stängs) innan klicket hinner registreras.
   $('#suggest').addEventListener('pointerdown', e => e.preventDefault());
   $('#suggest').addEventListener('mousedown', e => e.preventDefault());
