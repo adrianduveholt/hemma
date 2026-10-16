@@ -298,3 +298,9 @@ button.ing:active { background: var(--surface-2); }
 .check-line input { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
 
 .toast-actions { display: flex; gap: 14px; flex: none; }
+
+/* Tog slut nyligen */
+.emptied .shop-row { padding: 6px 10px; gap: 10px; }
+.thumb.small { width: 36px; height: 36px; font-size: 18px; border-radius: 8px; }
+.mini-btn { border: 0; border-radius: 999px; padding: 8px 12px; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.mini-btn.quiet { background: none; color: var(--muted); font-weight: 400; padding: 8px 6px; }

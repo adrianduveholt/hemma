@@ -126,19 +126,77 @@ function shopRowHtml(item) {
   </div>`;
 }
 
+// ---------- Tog slut nyligen ----------
+// Varor som tagit slut eller slängts de senaste två veckorna, som inte finns hemma igen
+// och inte står på listan. Går att gå igenom i lugn och ro; "Inte nu" markerar händelserna som sedda.
+function recentlyEmptied() {
+  const inStock = new Set(state.lots.map(l => l.productId));
+  const onList = new Set(shopItems().map(i => i.productId));
+  const byProduct = new Map();
+  for (const e of state.events) {
+    if (!e.emptied || e.reviewed || e.deleted || !['used', 'cooked', 'discarded'].includes(e.type)) continue;
+    if (!e.productId || e.productId === 'rester' || inStock.has(e.productId) || onList.has(e.productId)) continue;
+    const g = byProduct.get(e.productId) || { productId: e.productId, name: e.name, events: [], ts: '' };
+    g.events.push(e);
+    if (e.ts > g.ts) { g.ts = e.ts; g.type = e.type; g.recipe = e.recipe; }
+    byProduct.set(e.productId, g);
+  }
+  return [...byProduct.values()].sort((a, b) => b.ts.localeCompare(a.ts));
+}
+
+async function markReviewed(groups) {
+  const now = new Date().toISOString();
+  for (const g of groups) for (const e of g.events) {
+    const updated = { ...e, reviewed: true, updatedAt: now };
+    await db.put('events', updated);
+    state.events = state.events.map(x => x.id === e.id ? updated : x);
+  }
+}
+
+function emptiedHtml(groups) {
+  if (!groups.length) return '';
+  return `<div class="group"><h2>Tog slut nyligen</h2><span class="count">${groups.length}</span></div>
+    <div class="list emptied">${groups.map(g => {
+      const p = state.products.get(g.productId);
+      const why = g.type === 'discarded' ? 'slängd' : g.recipe ? `slut efter ${esc(g.recipe)}` : 'tog slut';
+      return `<div class="shop-row">
+        <span class="thumb small">${iconFor(g.name, p?.category)}</span>
+        <div class="shop-main"><div class="r-name">${esc(g.name)}</div><div class="r-sub">${why} · ${shortDate(g.ts.slice(0, 10))}</div></div>
+        <button class="mini-btn" data-emptied-add="${esc(g.productId)}" aria-label="Lägg ${esc(g.name)} på listan">+ Listan</button>
+        <button class="mini-btn quiet" data-emptied-skip="${esc(g.productId)}" aria-label="Hoppa över ${esc(g.name)}">Inte nu</button>
+      </div>`;
+    }).join('')}</div>
+    ${groups.length > 1 ? `<div class="btn-row" style="margin-top:8px">
+      <button class="btn" data-shop-act="emptied-all">Lägg alla ${groups.length} på listan</button>
+      <button class="btn" data-shop-act="emptied-none">Inte nu</button></div>` : ''}`;
+}
+
+async function emptiedAction(kind, productId) {
+  const groups = recentlyEmptied().filter(g => !productId || g.productId === productId);
+  if (kind === 'add') {
+    for (const g of groups) await addShopping({ product: state.products.get(g.productId), name: g.name, note: g.recipe || '' });
+    toast(groups.length === 1 ? `${groups[0].name} på listan` : `${groups.length} varor på listan`);
+  }
+  await markReviewed(groups);
+  renderShop();
+}
+
 function renderShop() {
   const el = $('#view-shop');
   const open = [...openItems(), ...lowStockItems()];
   const checked = shopItems().filter(i => i.checked);
+  const emptied = recentlyEmptied();
   updateShopBadge();
 
-  if (!open.length && !checked.length) {
+  if (!open.length && !checked.length && !emptied.length) {
     el.innerHTML = emptyHtml('🛒', 'Inköpslistan är tom', 'Skriv en vara i fältet ovan, eller tryck ”Lägg det som saknas på listan” i ett recept. Varor med en ”alltid hemma”-nivå hamnar här av sig själva.');
     return;
   }
   const groups = AISLE_ORDER.map(cat => ({ cat, items: open.filter(i => categoryOf(i) === cat).sort((a, b) => a.name.localeCompare(b.name, 'sv')) }))
     .filter(g => g.items.length);
   el.innerHTML = `
+    ${emptiedHtml(emptied)}
+    ${!open.length && !checked.length ? '<p class="meta">Inköpslistan är tom.</p>' : ''}
     ${groups.map(g => `<div class="group"><h2>${CATEGORY_ICON[g.cat] || ''} ${g.cat}</h2><span class="count">${g.items.length}</span></div>
       <div class="list">${g.items.map(shopRowHtml).join('')}</div>`).join('')}
     ${checked.length ? `
@@ -326,7 +384,13 @@ function bindShop() {
       else if (m.dataset.shop.startsWith('auto:')) openMinSheet(state.products.get(m.dataset.shop.slice(5)));
       return;
     }
+    const ea = e.target.closest('[data-emptied-add]');
+    if (ea) { emptiedAction('add', ea.dataset.emptiedAdd); return; }
+    const es = e.target.closest('[data-emptied-skip]');
+    if (es) { emptiedAction('skip', es.dataset.emptiedSkip); return; }
     const act = e.target.closest('[data-shop-act]')?.dataset.shopAct;
+    if (act === 'emptied-all') emptiedAction('add');
+    if (act === 'emptied-none') emptiedAction('skip');
     if (act === 'stock') openStockSheet();
     if (act === 'clear') clearChecked();
   });

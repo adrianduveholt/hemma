@@ -62,6 +62,7 @@ const state = {
   lots: [],
   recipes: [],
   shopping: [],
+  events: [],
   photoUrls: new Map(),
   suggestions: [],
   active: 0,
@@ -882,13 +883,16 @@ function restockAction(lot) {
   };
 }
 
-async function logEvent(type, lot, delta) {
+// extra: t.ex. { recipe: 'Tuna melt pasta' } för att kunna visa varför något tog slut.
+async function logEvent(type, lot, delta, extra = {}) {
   const ev = {
     id: uuid(), ts: new Date().toISOString(), type,
-    lotId: lot.id, productId: lot.productId, name: lot.name, unit: lot.unit, delta,
+    lotId: lot.id, productId: lot.productId, name: lot.name, unit: lot.unit, delta, ...extra,
   };
   ev.updatedAt = ev.ts;
+  ev.emptied = lot.status === 'used' || lot.status === 'discarded';
   await db.put('events', ev);
+  state.events.push(ev);
   return ev;
 }
 
@@ -896,6 +900,7 @@ async function logEvent(type, lot, delta) {
 async function deleteEvent(id) {
   const ev = await db.get('events', id);
   if (ev) await db.put('events', { ...ev, deleted: true, updatedAt: new Date().toISOString() });
+  state.events = state.events.filter(e => e.id !== id);
 }
 
 // ---------- Ångra ----------
@@ -1039,6 +1044,9 @@ async function load() {
   state.lots = (await db.all('lots')).filter(l => l.status === 'active' && !l.deleted);
   state.recipes = (await db.all('recipes')).filter(r => !r.deleted);
   state.shopping = (await db.all('shopping')).filter(i => !i.deleted);
+  // De senaste två veckornas händelser räcker för "Tog slut nyligen".
+  const since = addDays(todayIso(), -14);
+  state.events = (await db.all('events')).filter(e => !e.deleted && e.ts.slice(0, 10) >= since);
   for (const ph of await db.all('photos')) {
     if (!state.photoUrls.has(ph.id)) state.photoUrls.set(ph.id, URL.createObjectURL(ph.blob));
   }

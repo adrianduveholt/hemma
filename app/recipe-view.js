@@ -303,7 +303,7 @@ async function applyCook(recipe, takes, leftovers) {
     await db.put('lots', updated);
     state.lots = state.lots.filter(l => l.id !== lot.id);
     if (updated.status === 'active') state.lots.push(updated);
-    const ev = await logEvent('cooked', updated, Math.min(take, lot.qty));
+    const ev = await logEvent('cooked', updated, Math.min(take, lot.qty), { recipe: recipe.title });
     eventIds.push(ev.id);
   }
   let leftoverLot = null;
@@ -323,7 +323,11 @@ async function applyCook(recipe, takes, leftovers) {
   render();
   const parts = [`Drog av ${takes.length} ${takes.length === 1 ? 'vara' : 'varor'}`];
   if (leftoverLot) parts.push(`${leftovers} portion${leftovers > 1 ? 'er' : ''} rester i kylen`);
-  toast(parts.join(' · '), { type: 'cook', befores, eventIds, leftoverId: leftoverLot?.id });
+  // Tog något slut? Låt användaren gå igenom det i lugn och ro under Inköp.
+  const emptied = recentlyEmptied().filter(g => g.events.some(e => eventIds.includes(e.id))).length;
+  if (emptied) parts.push(`${emptied} tog slut`);
+  toast(parts.join(' · '), { type: 'cook', befores, eventIds, leftoverId: leftoverLot?.id },
+    emptied ? { label: 'Visa', run: () => { state.view = 'shop'; render(); window.scrollTo(0, 0); } } : null);
 }
 
 async function undoCook(u) {
