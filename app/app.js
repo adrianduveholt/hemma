@@ -91,8 +91,11 @@ function shortDate(iso) {
   return new Date(iso + 'T12:00:00').toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' });
 }
 function expiryBadge(lot) {
+  if (lot.low) return '<span class="badge warn">Snart slut</span>';
   const d = daysLeft(lot);
   if (d === null) return '';
+  // Förbrukningsvaror håller länge; datumet är bara intressant när det närmar sig.
+  if (d > 14 && isStaple(state.products.get(lot.productId))) return '';
   let cls = 'ok', text;
   if (d < 0) { cls = 'bad'; text = d === -1 ? 'Gick ut igår' : `Gick ut för ${-d} d`; }
   else if (d === 0) { cls = 'bad'; text = 'Idag'; }
@@ -214,7 +217,7 @@ function renderSuggest() {
       return `<li class="${cls}" data-k="${k}" role="option">
         ${thumbHtml(l)}
         <div class="s-label"><div class="s-name">${highlight(l.name, qv)}</div>
-        <div class="s-sub">${fmtQty(l.qty, l.unit)} · ${placeLabel(l.place)}</div></div>
+        <div class="s-sub">${qtyLabel(l)} · ${placeLabel(l.place)}</div></div>
         ${expiryBadge(l)}</li>`;
     }
     if (s.type === 'product') {
@@ -243,9 +246,56 @@ function pickSuggestion(k) {
   else openAddSheet(null, s.name);
 }
 
+// ---------- Förbrukningsvaror ----------
+// Basvaror där mängden inte är värd att räkna: bara "finns", "snart slut" eller "slut".
+const STAPLE_RE = /^(salt|svartpeppar|olja|olivolja|rapsolja|sesamolja|vetemjöl|grahamsmjöl|strösocker|florsocker|farinsocker|vaniljsocker|bakpulver|majsstärkelse|vinäger|balsamvinäger|soja|buljong|fond|havregryn|torrjäst|honung|sirap|kakao|ketchup|senap|majonnäs|sweet chili|sriracha|ströbröd)$/i;
+function isStaple(p) {
+  if (!p) return false;
+  if (p.staple != null) return p.staple;
+  return p.category === 'Kryddor' || STAPLE_RE.test(p.name);
+}
+function qtyLabel(lot) {
+  if (isStaple(state.products.get(lot.productId))) return lot.low ? 'Snart slut' : 'Finns';
+  return fmtQty(lot.qty, lot.unit);
+}
+
+// Lägg på listan och fråga direkt om det som finns hemma är slut.
+function openEmptyPrompt(product, lots) {
+  const staple = isStaple(product);
+  openSheet(`<div id="empty-prompt">
+    <div class="sheet-head"><span class="thumb">${iconFor(product.name, product.category)}</span>
+      <div><h3>${esc(product.name)} finns hemma</h3>
+      <div class="sub">${lots.map(l => `${qtyLabel(l)} · ${placeLabel(l.place)}`).join(', ')} – är ${lots.length > 1 ? 'de' : 'den'} slut?</div></div></div>
+    <button class="btn danger" data-e="empty">Slut – ta bort från lagret</button>
+    <div style="height:8px"></div>
+    ${staple ? `<button class="btn" data-e="low">Lite kvar – markera snart slut</button><div style="height:8px"></div>` : ''}
+    <button class="btn" data-e="keep">Finns kvar</button>
+  </div>`, root => {
+    root.querySelector('#empty-prompt').addEventListener('click', async e => {
+      const act = e.target.closest('[data-e]')?.dataset.e;
+      if (!act) return;
+      if (act === 'keep') { closeSheet(); return; }
+      const now = new Date().toISOString();
+      const befores = [], eventIds = [];
+      for (const lot of lots) {
+        befores.push({ ...lot });
+        const updated = act === 'empty' ? { ...lot, qty: 0, status: 'used', updatedAt: now } : { ...lot, low: true, updatedAt: now };
+        await db.put('lots', updated);
+        state.lots = state.lots.filter(l => l.id !== lot.id);
+        if (updated.status === 'active') state.lots.push(updated);
+        if (act === 'empty') eventIds.push((await logEvent('used', updated, lot.qty)).id);
+      }
+      closeSheet();
+      render();
+      toast(act === 'empty' ? `${product.name} borttagen från lagret och på listan` : `${product.name}: snart slut`, { type: 'cook', befores, eventIds });
+    });
+  });
+}
+
 function stockHint(p) {
   const lots = state.lots.filter(l => l.productId === p.id);
   if (!lots.length) return 'Finns inte hemma';
+  if (isStaple(p)) return lots.some(l => !l.low) ? 'Finns hemma' : 'Snart slut hemma';
   const total = lots.reduce((s, l) => s + l.qty, 0);
   return `Hemma: ${fmtQty(Math.round(total * 100) / 100, lots[0].unit)}`;
 }
@@ -269,7 +319,7 @@ function rowHtml(lot, sub) {
   return `<button class="row" data-lot="${lot.id}">
     ${thumbHtml(lot)}
     <div class="r-main"><div class="r-name">${esc(lot.name)}</div>
-    <div class="r-sub">${sub ?? `${fmtQty(lot.qty, lot.unit)} · ${placeLabel(lot.place)}${lot.openedAt ? ' · öppnad' : ''}`}</div></div>
+    <div class="r-sub">${sub ?? `${qtyLabel(lot)} · ${placeLabel(lot.place)}${lot.openedAt ? ' · öppnad' : ''}`}</div></div>
     ${expiryBadge(lot)}
   </button>`;
 }
@@ -491,6 +541,7 @@ function quickQtyHtml(unit) {
 // prefill: { qty, unit } från en skannad förpackning.
 function openAddSheet(product, newName, prefill = {}) {
   const isNew = !product;
+  const staple = !isNew && isStaple(product);
   const p = product || { name: newName.charAt(0).toUpperCase() + newName.slice(1), category: 'Övrigt', unit: 'st', place: 'kyl', shelfDays: 7 };
   // Förpackningens enhet till appens: 500 ml → 5 dl, 33 cl → 3,3 dl.
   let preQty = prefill.qty || null, preUnit = prefill.unit || null;
@@ -514,7 +565,8 @@ function openAddSheet(product, newName, prefill = {}) {
     </div>
     ${isNew ? `<div class="field"><label for="f-cat">Kategori</label>
       <select id="f-cat">${CATEGORIES.map(c => `<option ${c === form.category ? 'selected' : ''}>${c}</option>`).join('')}</select></div>` : ''}
-    <div class="field">
+    ${staple ? `<p class="meta">Förbrukningsvara – appen håller bara koll på att den finns hemma.</p>` : ''}
+    <div class="field" ${staple ? 'hidden' : ''}>
       <label for="f-qty">Hur mycket?</label>
       <div class="qty">
         <button type="button" class="step" data-step="-1" aria-label="Minska">−</button>
@@ -523,7 +575,7 @@ function openAddSheet(product, newName, prefill = {}) {
       </div>
       <div class="chips small" id="f-quick" style="margin-top:10px">${quickQtyHtml(form.unit)}</div>
     </div>
-    <div class="field"><span class="label">Enhet</span>
+    <div class="field" ${staple ? 'hidden' : ''}><span class="label">Enhet</span>
       ${chipsHtml('unit', UNITS.map(u => ({ value: u, label: u })), form.unit)}</div>
     <div class="field"><span class="label">Var?</span>
       ${chipsHtml('place', PLACES.map(pl => ({ value: pl.id, label: `${pl.icon} ${pl.label}` })), form.place)}</div>
@@ -543,7 +595,8 @@ function openAddSheet(product, newName, prefill = {}) {
     const qtyInput = root.querySelector('#f-qty');
     const best = root.querySelector('#f-best');
     // Med mängden ifylld från förpackningen räcker det att trycka Lägg till – inget tangentbord i vägen.
-    if (!preQty) qtyInput.focus();
+    if (staple) qtyInput.value = '1';
+    else if (!preQty) qtyInput.focus();
 
     root.querySelectorAll('.step').forEach(b => b.addEventListener('click', () => {
       const cur = parseNum(qtyInput.value) || 0;
@@ -614,7 +667,7 @@ async function addLot(p, isNew, form) {
   const after = state.afterAdd;
   closeSheet();
   render();
-  toast(`${lot.name} tillagd · ${fmtQty(lot.qty, lot.unit)}`, { type: 'remove', lot });
+  toast(`${lot.name} tillagd · ${qtyLabel(lot)}`, { type: 'remove', lot });
   after?.(lot);
 }
 
@@ -665,7 +718,8 @@ function openLotSheet(lot) {
   const countable = lot.unit === 'st' || lot.unit === 'förp';
   const canFreeze = lot.place !== 'frys';
   const openDays = product?.openDays;
-  const split = lot.openedAt ? null : splitSizeFor(lot, product);
+  const staple = isStaple(product);
+  const split = lot.openedAt || staple ? null : splitSizeFor(lot, product);
   const left = f => `${fmtQty(roundQty(lot.qty * f, lot.unit), lot.unit)}${packHint(lot, product, lot.qty * f)}`;
 
   openSheet(`
@@ -673,10 +727,15 @@ function openLotSheet(lot) {
     <div class="sheet-head">
       ${photo ? '' : thumbHtml(lot)}
       <div style="flex:1"><h3>${esc(lot.name)}</h3>
-      <div class="sub">${fmtQty(lot.qty, lot.unit)}${product?.pack?.qty && lot.unit === 'förp' ? ` à ${fmtQty(product.pack.qty, product.pack.unit)}` : ''} · ${placeLabel(lot.place)}${lot.openedAt ? ` · öppnad ${shortDate(lot.openedAt)}` : ''}</div></div>
+      <div class="sub">${staple ? qtyLabel(lot) : fmtQty(lot.qty, lot.unit)}${!staple && product?.pack?.qty && lot.unit === 'förp' ? ` à ${fmtQty(product.pack.qty, product.pack.unit)}` : ''} · ${placeLabel(lot.place)}${lot.openedAt ? ` · öppnad ${shortDate(lot.openedAt)}` : ''}</div></div>
       ${expiryBadge(lot)}
     </div>
-    <div class="field"><span class="label">Hur mycket finns kvar?</span>
+    ${staple ? `<div class="field"><span class="label">Förbrukningsvara – bara finns eller slut</span>
+      <div class="left-big two">
+        <button data-act="low">Snart slut<small>${lot.low ? 'markerad · står på listan' : 'läggs på listan'}</small></button>
+        <button data-act="empty">Slut<small>tas bort · läggs på listan</small></button>
+      </div></div>` : ''}
+    <div class="field" ${staple ? 'hidden' : ''}><span class="label">Hur mycket finns kvar?</span>
       <div class="left-big">
         <button data-left="0">Slut<small>uppäten</small></button>
         <button data-left="0.25">25 %<small>${left(0.25)}</small></button>
@@ -684,7 +743,7 @@ function openLotSheet(lot) {
         <button data-left="0.75">75 %<small>${left(0.75)}</small></button>
       </div>
     </div>
-    ${countable && lot.qty > 1 ? `<div class="field"><button class="btn" data-act="minus1">Ta ut 1 ${lot.unit}</button></div>` : ''}
+    ${!staple && countable && lot.qty > 1 ? `<div class="field"><button class="btn" data-act="minus1">Ta ut 1 ${lot.unit}</button></div>` : ''}
     <div class="btn-row">
       ${lot.openedAt ? '' : `<button class="btn" data-act="open">${split ? 'Öppna en förp' : 'Öppnad'}${openDays ? ` <small>(${openDays} d)</small>` : ''}</button>`}
       ${canFreeze ? `<button class="btn" data-act="freeze">🧊 Frys in</button>` : ''}
@@ -702,6 +761,14 @@ function openLotSheet(lot) {
     root.querySelector('.left-big').addEventListener('click', e => {
       const b = e.target.closest('[data-left]');
       if (b) setLeft(lot, Number(b.dataset.left));
+    });
+    root.querySelector('[data-act="low"]')?.addEventListener('click', async () => {
+      await addShopping({ product, name: lot.name, note: 'Snart slut' });
+      updateLot(lot, { low: true }, 'low', 0, `${lot.name}: snart slut – på inköpslistan`);
+    });
+    root.querySelector('[data-act="empty"]')?.addEventListener('click', async () => {
+      await addShopping({ product, name: lot.name });
+      updateLot(lot, { qty: 0, status: 'used' }, 'used', lot.qty, `${lot.name} slut – på inköpslistan`);
     });
     root.querySelector('[data-act="minus1"]')?.addEventListener('click', () => updateLot(lot, { qty: lot.qty - 1 }, 'used', 1, `Tog ut 1 ${lot.unit} ${lot.name}`));
     root.querySelector('[data-act="open"]')?.addEventListener('click', () => {
@@ -745,6 +812,8 @@ function openEditSheet(lot) {
     <div class="field"><span class="label">Enhet</span>${chipsHtml('unit', UNITS.map(u => ({ value: u, label: u })), lot.unit)}</div>
     <div class="field"><span class="label">Var?</span>${chipsHtml('place', PLACES.map(pl => ({ value: pl.id, label: `${pl.icon} ${pl.label}` })), lot.place)}</div>
     <div class="field"><label for="e-best">Bäst före</label><input id="e-best" type="date" value="${lot.bestBefore || ''}"></div>
+    ${product ? `<div class="field"><label class="check-line"><input type="checkbox" id="e-staple" ${isStaple(product) ? 'checked' : ''}>
+      <span>Förbrukningsvara – räkna inte mängd, bara finns/slut</span></label></div>` : ''}
     ${product ? `<div class="field"><label for="e-pack">En förpackning innehåller</label>
       <div class="qty"><input id="e-pack" inputmode="decimal" placeholder="t.ex. 1,5" value="${product.pack?.qty ? nf.format(product.pack.qty) : ''}"></div>
       <div style="margin-top:10px">${chipsHtml('packunit', ['l', 'dl', 'g', 'kg'].map(u => ({ value: u, label: u })), form.packUnit)}</div>
@@ -770,8 +839,9 @@ function openEditSheet(lot) {
       if (product) {
         const pq = parseNum(root.querySelector('#e-pack').value);
         const pack = pq > 0 ? { qty: pq, unit: form.packUnit } : null;
-        if (JSON.stringify(pack) !== JSON.stringify(product.pack || null)) {
-          const up = { ...product, pack, updatedAt: new Date().toISOString() };
+        const staple = root.querySelector('#e-staple').checked;
+        if (JSON.stringify(pack) !== JSON.stringify(product.pack || null) || staple !== isStaple(product)) {
+          const up = { ...product, pack, staple, updatedAt: new Date().toISOString() };
           await db.put('products', up);
           state.products.set(up.id, up);
         }

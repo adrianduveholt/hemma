@@ -80,7 +80,7 @@ function openIngredientPicker(recipe, servings, row) {
     return `
       ${lots.length ? `<div class="group"><h2>Finns hemma</h2></div><div class="list">${lots.map(({ l }) => `
         <button class="row" data-pick="${esc(l.productId)}">${thumbHtml(l)}
-          <div class="r-main"><div class="r-name">${esc(l.name)}</div><div class="r-sub">${fmtQty(l.qty, l.unit)} · ${placeLabel(l.place)}</div></div>
+          <div class="r-main"><div class="r-name">${esc(l.name)}</div><div class="r-sub">${qtyLabel(l)} · ${placeLabel(l.place)}</div></div>
         </button>`).join('')}</div>` : ''}
       ${prods.length ? `<div class="group"><h2>Alla varor</h2></div><div class="list">${prods.map(({ p }) => `
         <button class="row" data-pick="${esc(p.id)}"><span class="thumb">${iconFor(p.name, p.category)}</span>
@@ -192,6 +192,7 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
     const total = r.lots.reduce((s, l) => s + l.qty, 0);
     const sub = r.ignored ? 'Behövs inte i lagret'
       : !r.product ? 'Hittar ingen vara – tryck för att välja'
+      : home && isStaple(r.product) ? `Finns hemma · ${placeLabel(r.lots[0].place)}`
       : home ? `Hemma: ${fmtQty(Math.round(total * 100) / 100, r.lots[0].unit)} ${esc(r.product.name.toLowerCase())} · ${placeLabel(r.lots[0].place)}`
       : `Saknas hemma (${esc(r.product.name)}) – tryck för att välja annan`;
     return `<button type="button" class="ing ${home ? 'have' : r.ignored ? 'ignored' : r.product ? 'miss' : 'unknown'}" data-ing="${r.i}">
@@ -244,7 +245,8 @@ function planCook(recipe, servings) {
   const scale = recipe.servings && servings ? servings / recipe.servings : 1;
   const plan = [];
   for (const r of analyzeRecipe(recipe, scale)) {
-    if (!r.lots.length) continue;
+    // Förbrukningsvaror dras inte av – de finns tills någon säger att de är slut.
+    if (!r.lots.length || isStaple(r.product)) continue;
     // Äldst först: ta från partiet som går ut först.
     let left = convertQty(r.need, r.ing.unit, r.lots[0].unit, r.product.name);
     const known = left != null;

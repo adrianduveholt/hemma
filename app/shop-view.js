@@ -72,6 +72,9 @@ async function addFromSearch(product, newName) {
   if (state.view === 'shop') renderShop();
   updateShopBadge();
   toast(`${item.name} på listan`);
+  // Finns varan hemma? Fråga om den är slut, så att lagret stämmer utan ett extra steg.
+  const lots = product ? state.lots.filter(l => l.productId === product.id) : [];
+  if (lots.length) openEmptyPrompt(product, lots);
 }
 
 // Det som saknas till ett recept (eller inte räcker) läggs på listan.
