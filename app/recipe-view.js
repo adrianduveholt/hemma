@@ -141,6 +141,7 @@ function renderRecipes() {
       </div>
       <p class="meta" id="r-status"></p>
     </div>
+    ${state.lots.length ? `<button class="btn ai-btn" data-recipe-act="ai">✨ Inga idéer? Fråga en AI vad ni kan laga</button>` : ''}
     ${recipes.length ? `
       <div class="group"><h2>Sorterat efter vad som finns hemma</h2><span class="count">${recipes.length}</span></div>
       <div class="list">${recipes.map(({ r, c }) => `
@@ -359,6 +360,7 @@ function bindRecipes() {
     if (row) { const r = state.recipes.find(x => x.id === row.dataset.recipe); if (r) openRecipeSheet(r); return; }
     const act = e.target.closest('[data-recipe-act]')?.dataset.recipeAct;
     if (act === 'import') importRecipe($('#r-url').value);
+    if (act === 'ai') openAiExport();
     if (act === 'paste') {
       try {
         const text = await navigator.clipboard.readText();

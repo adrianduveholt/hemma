@@ -393,7 +393,7 @@ function renderStock() {
   }
   const groups = PLACES.map(p => ({ p, items: lots.filter(l => l.place === p.id).sort((a, b) => a.name.localeCompare(b.name, 'sv') || sortByExpiry(a, b)) }))
     .filter(g => g.items.length);
-  el.innerHTML = filters + (groups.length ? groups.map(g => `
+  el.innerHTML = `<button class="btn ai-btn" data-action="ai">✨ Receptidéer med AI</button>` + filters + (groups.length ? groups.map(g => `
     <div class="group"><h2>${g.p.icon} ${g.p.label}</h2><span class="count">${g.items.length}</span></div>
     <div class="list">${g.items.map(l => rowHtml(l)).join('')}</div>`).join('')
     : emptyHtml('🔍', 'Inga träffar', 'Ingen vara hemma matchar sökningen.'));
@@ -1097,6 +1097,7 @@ function bind() {
     if (sa) { e.preventDefault(); syncAction(sa.dataset.sync); return; }
     const act = e.target.closest('[data-action]');
     if (act?.dataset.action === 'export') exportData();
+    if (act?.dataset.action === 'ai') openAiExport();
     if (act?.dataset.action === 'import') {
       const input = $('#import-input');
       input.onchange = () => input.files[0] && importData(input.files[0]);
