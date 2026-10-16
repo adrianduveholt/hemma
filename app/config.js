@@ -2,6 +2,6 @@
 // Den publika nyckeln får ligga i appen – åtkomsten skyddas av radbehörigheterna i supabase/migrations/20261016120000_hemma.sql.
 // Lägg ALDRIG in service_role-/secret-nyckeln här.
 window.HEMMA_CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: '',
+  supabaseUrl: 'https://rqffnlnahhyuxxatrjvt.supabase.co',
+  supabaseKey: 'sb_publishable_YxoKFWAFL-ohgUT7m0rDLg_68ehL2jb',
 };
