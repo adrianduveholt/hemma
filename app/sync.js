@@ -160,6 +160,7 @@ const Sync = (() => {
     for (const l of await db.all('lots')) entries.push({ kind: 'lots', recId: l.id });
     for (const e of await db.all('events')) entries.push({ kind: 'events', recId: e.id });
     for (const r of await db.all('recipes')) entries.push({ kind: 'recipes', recId: r.id });
+    for (const s of await db.all('shopping')) entries.push({ kind: 'shopping', recId: s.id });
     for (const ph of await db.all('photos')) entries.push({ kind: 'photo', recId: ph.id });
     await db.putMany('outbox', entries.map(e => ({ ...e, id: e.kind + '|' + e.recId, at: now })));
   }

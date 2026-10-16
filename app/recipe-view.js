@@ -210,6 +210,8 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
       <button class="step" data-serv="1" aria-label="Fler">+</button></div></div>` : ''}
     <div class="ings">${rows.map(rowHtml).join('')}</div>
     <div style="height:12px"></div>
+    <button class="btn" data-missing>🛒 Lägg det som saknas på listan</button>
+    <div style="height:8px"></div>
     <button class="btn primary sticky-save" data-cook>Laga – dra av från lagret</button>
     <div class="btn-row" style="margin-top:8px">
       <a class="btn" href="${esc(recipe.url)}" target="_blank" rel="noopener">Öppna hos ICA</a>
@@ -221,6 +223,7 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
       openRecipeSheet(recipe, next);
     }));
     root.querySelector('[data-cook]').addEventListener('click', () => openCookSheet(recipe, servings));
+    root.querySelector('[data-missing]').addEventListener('click', () => addMissingFromRecipe(recipe, servings));
     root.querySelector('.ings').addEventListener('click', e => {
       const b = e.target.closest('[data-ing]');
       if (b) openIngredientPicker(recipe, servings, rows[Number(b.dataset.ing)]);

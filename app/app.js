@@ -30,6 +30,8 @@ const state = {
   stockPlace: 'alla',
   products: new Map(),
   lots: [],
+  recipes: [],
+  shopping: [],
   photoUrls: new Map(),
   suggestions: [],
   active: 0,
@@ -131,8 +133,9 @@ function search(qRaw) {
   const q = norm(qRaw);
   if (!q) return [];
   const results = [];
+  const shopping = state.view === 'shop';
 
-  const lots = state.lots
+  const lots = shopping ? [] : state.lots
     .map(l => ({ l, s: matchScore(l.name, q) }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s || (a.l.bestBefore || '9').localeCompare(b.l.bestBefore || '9'))
@@ -149,7 +152,7 @@ function search(qRaw) {
     .map(x => ({ ...x, s: x.s + Math.min((x.p.uses || 0) * 4, 30) }))
     .sort((a, b) => b.s - a.s || a.p.name.localeCompare(b.p.name, 'sv'))
     .slice(0, 8);
-  results.push({ type: 'head', label: 'Lägg till' });
+  results.push({ type: 'head', label: shopping ? 'Lägg på listan' : 'Lägg till' });
   for (const { p } of prods) results.push({ type: 'product', product: p });
 
   const exact = prods.some(x => norm(x.p.name) === q);
@@ -189,8 +192,8 @@ function renderSuggest() {
       return `<li class="${cls}" data-k="${k}" role="option">
         <span class="thumb">${CATEGORY_ICON[p.category] || '📦'}</span>
         <div class="s-label"><div class="s-name">${highlight(p.name, qv)}</div>
-        <div class="s-sub">${esc(p.category)} · ${placeLabel(p.place)}</div></div>
-        <span class="s-tag">+ Lägg till</span></li>`;
+        <div class="s-sub">${state.view === 'shop' ? stockHint(p) : `${esc(p.category)} · ${placeLabel(p.place)}`}</div></div>
+        <span class="s-tag">${state.view === 'shop' ? '+ På listan' : '+ Lägg till'}</span></li>`;
     }
     return `<li class="${cls}" data-k="${k}" role="option">
       <span class="thumb">✨</span>
@@ -204,9 +207,17 @@ function pickSuggestion(k) {
   const s = state.suggestions.filter(x => x.type !== 'head')[k];
   if (!s) return;
   clearQuery();
+  if (state.view === 'shop') { s.type === 'product' ? addFromSearch(s.product) : addFromSearch(null, s.name); return; }
   if (s.type === 'lot') openLotSheet(s.lot);
   else if (s.type === 'product') openAddSheet(s.product);
   else openAddSheet(null, s.name);
+}
+
+function stockHint(p) {
+  const lots = state.lots.filter(l => l.productId === p.id);
+  if (!lots.length) return 'Finns inte hemma';
+  const total = lots.reduce((s, l) => s + l.qty, 0);
+  return `Hemma: ${fmtQty(Math.round(total * 100) / 100, lots[0].unit)}`;
 }
 
 function clearQuery() {
@@ -238,12 +249,14 @@ function sortByExpiry(a, b) {
 
 // ---------- Vyer ----------
 function render() {
-  $('#title').textContent = { home: 'Ät först', stock: 'Lager', recipes: 'Recept', more: 'Mer' }[state.view];
+  $('#title').textContent = { home: 'Ät först', stock: 'Lager', recipes: 'Recept', shop: 'Inköp', more: 'Mer' }[state.view];
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
-  for (const v of ['home', 'stock', 'recipes', 'more']) $(`#view-${v}`).hidden = v !== state.view;
+  for (const v of ['home', 'stock', 'recipes', 'shop', 'more']) $(`#view-${v}`).hidden = v !== state.view;
   if (state.view === 'home') renderHome();
   if (state.view === 'stock') renderStock();
   if (state.view === 'recipes') renderRecipes();
+  if (state.view === 'shop') renderShop();
+  updateShopBadge();
   if (state.view === 'more') renderMore();
 }
 
@@ -556,6 +569,7 @@ async function addLot(p, isNew, form) {
   await db.put('lots', lot);
   state.lots.push(lot);
   await logEvent('added', lot, lot.qty);
+  await shopOnStocked(product.id);
   closeSheet();
   render();
   toast(`${lot.name} tillagd · ${fmtQty(lot.qty, lot.unit)}`, { type: 'remove', lot });
@@ -595,6 +609,10 @@ function openLotSheet(lot) {
       <button class="btn danger" data-act="discard">🗑 Slängd</button>
       <button class="btn" data-act="edit">Ändra</button>
     </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn" data-act="shop">🛒 På listan</button>
+      ${product ? `<button class="btn" data-act="min">${product.minQty ? `Alltid hemma: ${fmtQty(product.minQty, product.minUnit || product.unit)}` : 'Alltid hemma…'}</button>` : ''}
+    </div>
     <p class="meta">Inlagd ${shortDate(lot.addedAt.slice(0, 10))}${lot.bestBefore ? ` · bäst före ${shortDate(lot.bestBefore)}${d < 0 ? ' – lukta och smaka, mycket är ofta ätbart efter datum' : ''}` : ''}</p>
   `, root => {
     root.querySelector('.left-big').addEventListener('click', e => {
@@ -615,6 +633,11 @@ function openLotSheet(lot) {
     root.querySelector('[data-act="discard"]').addEventListener('click', () =>
       updateLot(lot, { qty: 0, status: 'discarded' }, 'discarded', lot.qty, `${lot.name} slängd`));
     root.querySelector('[data-act="edit"]').addEventListener('click', () => openEditSheet(lot));
+    root.querySelector('[data-act="shop"]').addEventListener('click', async () => {
+      closeSheet();
+      await addFromSearch(product || null, lot.name);
+    });
+    root.querySelector('[data-act="min"]')?.addEventListener('click', () => openMinSheet(product));
   });
 }
 
@@ -695,6 +718,7 @@ async function undo() {
   if (!u) return;
   state.undo = null;
   if (u.type === 'cook') await undoCook(u);
+  else if (u.type === 'shop') await undoShop(u);
   else if (u.type === 'recipe') await undoRecipeDelete(u);
   else if (u.type === 'remove') {
     const removed = { ...u.lot, status: 'removed', deleted: true, updatedAt: new Date().toISOString() };
@@ -817,6 +841,7 @@ async function load() {
   }
   state.lots = (await db.all('lots')).filter(l => l.status === 'active' && !l.deleted);
   state.recipes = (await db.all('recipes')).filter(r => !r.deleted);
+  state.shopping = (await db.all('shopping')).filter(i => !i.deleted);
   for (const ph of await db.all('photos')) {
     if (!state.photoUrls.has(ph.id)) state.photoUrls.set(ph.id, URL.createObjectURL(ph.blob));
   }
@@ -873,6 +898,7 @@ function bind() {
     }
   });
   bindRecipes();
+  bindShop();
   $('#sheet-backdrop').addEventListener('click', closeSheet);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
   // Datumen räknas om när appen kommer tillbaka från bakgrunden (t.ex. nästa morgon).

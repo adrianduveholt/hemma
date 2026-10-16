@@ -250,3 +250,28 @@ button.ing:first-child { border-top: 0; }
 button.ing:active { background: var(--surface-2); }
 .ing-edit { color: var(--muted); font-size: 20px; flex: none; }
 .ing.ignored .ing-main { color: var(--muted); }
+
+/* Inköp */
+.shop-row { display: flex; align-items: center; gap: 4px; padding: 4px 12px 4px 6px; border-top: 1px solid var(--line); }
+.shop-row:first-child { border-top: 0; }
+.shop-check {
+  width: 44px; height: 44px; flex: none; border: 0; background: none; cursor: pointer; display: grid; place-items: center;
+  font-weight: 700; color: var(--on-accent); position: relative;
+}
+.shop-check::before { content: ''; position: absolute; inset: 10px; border: 2px solid var(--line); border-radius: 50%; }
+.shop-row.done .shop-check::before { background: var(--accent); border-color: var(--accent); }
+.shop-check { z-index: 0; }
+.shop-check { isolation: isolate; }
+.shop-row .shop-check { font-size: 14px; }
+.shop-row.done .shop-check { color: var(--on-accent); }
+.shop-main { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 8px 0; cursor: pointer; color: inherit; font: inherit; }
+.shop-main .r-name { font-weight: 600; }
+.shop-main .r-sub { color: var(--muted); font-size: 13px; }
+.shop-row.done .r-name { text-decoration: line-through; color: var(--muted); }
+.tabs button { position: relative; }
+.tab-badge {
+  position: absolute; top: 6px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 700;
+}
+.unit-label { color: var(--muted); font-size: 18px; padding: 0 8px; }
+.cook-row select { height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; margin-top: 4px; }
