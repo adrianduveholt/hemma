@@ -141,14 +141,17 @@ function renderRecipes() {
       </div>
       <p class="meta" id="r-status"></p>
     </div>
-    ${state.lots.length ? `<button class="btn ai-btn" data-recipe-act="ai">✨ Inga idéer? Fråga en AI vad ni kan laga</button>` : ''}
+    <div class="btn-row ai-row">
+      ${state.lots.length ? `<button class="btn ai-btn" data-recipe-act="ai">✨ Fråga en AI</button>` : ''}
+      <button class="btn ai-btn" data-recipe-act="ai-import">📥 Importera AI-svar</button>
+    </div>
     ${recipes.length ? `
       <div class="group"><h2>Sorterat efter vad som finns hemma</h2><span class="count">${recipes.length}</span></div>
       <div class="list">${recipes.map(({ r, c }) => `
         <button class="row" data-recipe="${esc(r.id)}">
-          ${r.image ? `<img class="thumb" src="${esc(r.image)}" alt="" loading="lazy">` : '<span class="thumb">🍽️</span>'}
+          ${r.image ? `<img class="thumb" src="${esc(r.image)}" alt="" loading="lazy">` : `<span class="thumb">${r.source === 'ai' ? '✨' : '🍽️'}</span>`}
           <div class="r-main"><div class="r-name">${esc(r.title)}</div>
-          <div class="r-sub">${r.servings ? `${r.servings} ${esc(r.servingsLabel)} · ` : ''}${c.total} ingredienser</div></div>
+          <div class="r-sub">${r.source === 'ai' ? 'AI-förslag · ' : ''}${r.servings ? `${r.servings} ${esc(r.servingsLabel)} · ` : ''}${c.total} ingredienser</div></div>
           <span class="badge ${c.have === c.total ? 'ok' : c.have / c.total >= .6 ? 'warn' : ''}">${c.have} av ${c.total} hemma</span>
         </button>`).join('')}</div>`
     : emptyHtml('📖', 'Inga recept än', 'Recept du hämtar från ICA hamnar här, sorterade efter hur mycket av ingredienserna ni redan har hemma.')}`;
@@ -211,12 +214,14 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
       <input id="r-serv" value="${servings}" inputmode="numeric" readonly>
       <button class="step" data-serv="1" aria-label="Fler">+</button></div></div>` : ''}
     <div class="ings">${rows.map(rowHtml).join('')}</div>
+    ${recipe.steps?.length ? `<div class="group"><h2>Gör så här</h2></div>
+      <ol class="steps">${recipe.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
     <div style="height:12px"></div>
     <button class="btn" data-missing>🛒 Lägg det som saknas på listan</button>
     <div style="height:8px"></div>
     <button class="btn primary sticky-save" data-cook>Laga – dra av från lagret</button>
     <div class="btn-row" style="margin-top:8px">
-      <a class="btn" href="${esc(recipe.url)}" target="_blank" rel="noopener">Öppna hos ICA</a>
+      ${recipe.url ? `<a class="btn" href="${esc(recipe.url)}" target="_blank" rel="noopener">Öppna hos ICA</a>` : ''}
       <button class="btn danger" data-del-recipe>Ta bort</button>
     </div>
   `, root => {
@@ -361,6 +366,7 @@ function bindRecipes() {
     const act = e.target.closest('[data-recipe-act]')?.dataset.recipeAct;
     if (act === 'import') importRecipe($('#r-url').value);
     if (act === 'ai') openAiExport();
+    if (act === 'ai-import') openAiImport();
     if (act === 'paste') {
       try {
         const text = await navigator.clipboard.readText();
