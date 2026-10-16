@@ -618,6 +618,45 @@ async function addLot(p, isNew, form) {
   after?.(lot);
 }
 
+// ---------- Förpackningar ----------
+// product.pack = { qty, unit }: hur mycket en förpackning innehåller, t.ex. mjölk 1,5 l.
+// Fylls i när en förpackning skannas, eller för hand under Ändra.
+function packIn(product, unit) {
+  if (unit === 'förp' || unit === 'st') return 1;
+  const pk = product?.pack;
+  if (!pk?.qty) return null;
+  return convertQty(pk.qty, pk.unit, unit, product.name);
+}
+function packHint(lot, product, qty) {
+  const pk = product?.pack;
+  if (!pk?.qty || (lot.unit !== 'förp' && lot.unit !== 'st')) return '';
+  return ` ≈ ${fmtQty(roundQty(qty * pk.qty, pk.unit), pk.unit)}`;
+}
+// Öppnar man en av flera förpackningar bryts den ut till en egen rad med kortare hållbarhet.
+function splitSizeFor(lot, product) {
+  const size = packIn(product, lot.unit);
+  if (!size) return null;
+  return lot.qty > size * 1.05 ? size : null;
+}
+
+async function openOnePack(lot, size, changes) {
+  const now = new Date().toISOString();
+  const before = { ...lot };
+  const rest = { ...lot, qty: roundQty(lot.qty - size, lot.unit), updatedAt: now };
+  const opened = {
+    ...lot, id: uuid(), qty: size, initialQty: size, openedAt: changes.openedAt,
+    bestBefore: changes.bestBefore ?? lot.bestBefore, updatedAt: now,
+  };
+  await db.put('lots', rest);
+  await db.put('lots', opened);
+  state.lots = state.lots.filter(l => l.id !== lot.id).concat(rest, opened);
+  const ev = await logEvent('opened', opened, 0);
+  closeSheet();
+  render();
+  toast(`En förpackning öppnad${changes.bestBefore ? ` – håller till ${shortDate(changes.bestBefore)}` : ''} · ${fmtQty(rest.qty, rest.unit)} kvar oöppnat`,
+    { type: 'split', before, newId: opened.id, eventId: ev.id });
+}
+
 // Bladet för en vara som finns hemma.
 function openLotSheet(lot) {
   const product = state.products.get(lot.productId);
@@ -626,26 +665,28 @@ function openLotSheet(lot) {
   const countable = lot.unit === 'st' || lot.unit === 'förp';
   const canFreeze = lot.place !== 'frys';
   const openDays = product?.openDays;
+  const split = lot.openedAt ? null : splitSizeFor(lot, product);
+  const left = f => `${fmtQty(roundQty(lot.qty * f, lot.unit), lot.unit)}${packHint(lot, product, lot.qty * f)}`;
 
   openSheet(`
     ${photo ? `<img class="photo-big" src="${photo}" alt="">` : ''}
     <div class="sheet-head">
       ${photo ? '' : thumbHtml(lot)}
       <div style="flex:1"><h3>${esc(lot.name)}</h3>
-      <div class="sub">${fmtQty(lot.qty, lot.unit)} · ${placeLabel(lot.place)}${lot.openedAt ? ` · öppnad ${shortDate(lot.openedAt)}` : ''}</div></div>
+      <div class="sub">${fmtQty(lot.qty, lot.unit)}${product?.pack?.qty && lot.unit === 'förp' ? ` à ${fmtQty(product.pack.qty, product.pack.unit)}` : ''} · ${placeLabel(lot.place)}${lot.openedAt ? ` · öppnad ${shortDate(lot.openedAt)}` : ''}</div></div>
       ${expiryBadge(lot)}
     </div>
     <div class="field"><span class="label">Hur mycket finns kvar?</span>
       <div class="left-big">
         <button data-left="0">Slut<small>uppäten</small></button>
-        <button data-left="0.25">25 %<small>${fmtQty(roundQty(lot.qty * 0.25, lot.unit), lot.unit)}</small></button>
-        <button data-left="0.5">50 %<small>${fmtQty(roundQty(lot.qty * 0.5, lot.unit), lot.unit)}</small></button>
-        <button data-left="0.75">75 %<small>${fmtQty(roundQty(lot.qty * 0.75, lot.unit), lot.unit)}</small></button>
+        <button data-left="0.25">25 %<small>${left(0.25)}</small></button>
+        <button data-left="0.5">50 %<small>${left(0.5)}</small></button>
+        <button data-left="0.75">75 %<small>${left(0.75)}</small></button>
       </div>
     </div>
     ${countable && lot.qty > 1 ? `<div class="field"><button class="btn" data-act="minus1">Ta ut 1 ${lot.unit}</button></div>` : ''}
     <div class="btn-row">
-      ${lot.openedAt ? '' : `<button class="btn" data-act="open">Öppnad${openDays ? ` <small>(${openDays} d)</small>` : ''}</button>`}
+      ${lot.openedAt ? '' : `<button class="btn" data-act="open">${split ? 'Öppna en förp' : 'Öppnad'}${openDays ? ` <small>(${openDays} d)</small>` : ''}</button>`}
       ${canFreeze ? `<button class="btn" data-act="freeze">🧊 Frys in</button>` : ''}
     </div>
     <div class="btn-row" style="margin-top:8px">
@@ -669,6 +710,7 @@ function openLotSheet(lot) {
         const after = addDays(todayIso(), openDays);
         if (!lot.bestBefore || after < lot.bestBefore) changes.bestBefore = after;
       }
+      if (split) { openOnePack(lot, split, changes); return; }
       updateLot(lot, changes, 'opened', 0, changes.bestBefore ? `Öppnad – håller till ${shortDate(changes.bestBefore)}` : `${lot.name} markerad som öppnad`);
     });
     root.querySelector('[data-act="freeze"]')?.addEventListener('click', () =>
@@ -694,7 +736,8 @@ function setLeft(lot, fraction) {
 }
 
 function openEditSheet(lot) {
-  const form = { unit: lot.unit, place: lot.place, photoBlob: null };
+  const product = state.products.get(lot.productId);
+  const form = { unit: lot.unit, place: lot.place, photoBlob: null, packUnit: product?.pack?.unit || (['g', 'kg'].includes(product?.unit) ? 'g' : 'l') };
   openSheet(`
     <div class="sheet-head">${thumbHtml(lot)}<div><h3>Ändra ${esc(lot.name)}</h3></div></div>
     <div class="field"><label for="e-qty">Mängd</label>
@@ -702,6 +745,10 @@ function openEditSheet(lot) {
     <div class="field"><span class="label">Enhet</span>${chipsHtml('unit', UNITS.map(u => ({ value: u, label: u })), lot.unit)}</div>
     <div class="field"><span class="label">Var?</span>${chipsHtml('place', PLACES.map(pl => ({ value: pl.id, label: `${pl.icon} ${pl.label}` })), lot.place)}</div>
     <div class="field"><label for="e-best">Bäst före</label><input id="e-best" type="date" value="${lot.bestBefore || ''}"></div>
+    ${product ? `<div class="field"><label for="e-pack">En förpackning innehåller</label>
+      <div class="qty"><input id="e-pack" inputmode="decimal" placeholder="t.ex. 1,5" value="${product.pack?.qty ? nf.format(product.pack.qty) : ''}"></div>
+      <div style="margin-top:10px">${chipsHtml('packunit', ['l', 'dl', 'g', 'kg'].map(u => ({ value: u, label: u })), form.packUnit)}</div>
+      <p class="meta">Används när en av flera förpackningar öppnas, och för att visa liter eller gram vid ”förp”.</p></div>` : ''}
     <div class="field"><button type="button" class="btn" id="e-photo">📷 ${lot.photoId ? 'Ta om bild' : 'Ta bild'}</button></div>
     <button class="btn primary" id="e-save">Spara</button>
     <div style="height:8px"></div>
@@ -709,6 +756,7 @@ function openEditSheet(lot) {
   `, root => {
     bindChips(root, 'unit', u => form.unit = u);
     bindChips(root, 'place', p => form.place = p);
+    if (product) bindChips(root, 'packunit', u => form.packUnit = u);
     root.querySelector('#e-photo').addEventListener('click', async () => {
       const blob = await takePhoto();
       if (blob) { form.photoBlob = blob; root.querySelector('#e-photo').textContent = '📷 Bild vald'; }
@@ -719,6 +767,15 @@ function openEditSheet(lot) {
       const changes = { qty, unit: form.unit, place: form.place, bestBefore: root.querySelector('#e-best').value || null };
       if (form.photoBlob) changes.photoId = await savePhoto(form.photoBlob);
       if (qty === 0) changes.status = 'used';
+      if (product) {
+        const pq = parseNum(root.querySelector('#e-pack').value);
+        const pack = pq > 0 ? { qty: pq, unit: form.packUnit } : null;
+        if (JSON.stringify(pack) !== JSON.stringify(product.pack || null)) {
+          const up = { ...product, pack, updatedAt: new Date().toISOString() };
+          await db.put('products', up);
+          state.products.set(up.id, up);
+        }
+      }
       updateLot(lot, changes, 'edited', 0, `${lot.name} uppdaterad`);
     });
     root.querySelector('#e-delete').addEventListener('click', () =>
@@ -763,6 +820,15 @@ async function undo() {
   if (u.type === 'cook') await undoCook(u);
   else if (u.type === 'shop') await undoShop(u);
   else if (u.type === 'recipe') await undoRecipeDelete(u);
+  else if (u.type === 'split') {
+    const now = new Date().toISOString();
+    const opened = state.lots.find(l => l.id === u.newId);
+    if (opened) await db.put('lots', { ...opened, status: 'removed', deleted: true, updatedAt: now });
+    const restored = { ...u.before, updatedAt: now };
+    await db.put('lots', restored);
+    state.lots = state.lots.filter(l => l.id !== u.newId && l.id !== restored.id).concat(restored);
+    await deleteEvent(u.eventId);
+  }
   else if (u.type === 'remove') {
     const removed = { ...u.lot, status: 'removed', deleted: true, updatedAt: new Date().toISOString() };
     await db.put('lots', removed);

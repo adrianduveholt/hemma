@@ -174,6 +174,12 @@ function packQty(info, product) {
 async function rememberBarcode(product, code, off) {
   const info = { code, qty: off?.qty || null, unit: off?.unit || null, label: off ? [off.brand, off.name].filter(Boolean).join(' ') : null };
   const updated = { ...product, barcodes: [...(product.barcodes || []).filter(b => b.code !== code), info], updatedAt: new Date().toISOString() };
+  // Första skannade förpackningen ger varans förpackningsstorlek: 1500 ml → 1,5 l.
+  if (!product.pack && off?.qty && off.unit) {
+    const u = off.unit === 'ml' || off.unit === 'cl' ? 'l' : off.unit;
+    const q = convertQty(off.qty, off.unit, u, product.name);
+    if (q && ['l', 'dl', 'g', 'kg'].includes(u)) updated.pack = { qty: Math.round(q * 1000) / 1000, unit: u };
+  }
   await db.put('products', updated);
   state.products.set(updated.id, updated);
   return { product: updated, info };
