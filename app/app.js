@@ -238,11 +238,12 @@ function sortByExpiry(a, b) {
 
 // ---------- Vyer ----------
 function render() {
-  $('#title').textContent = { home: 'Ät först', stock: 'Lager', more: 'Mer' }[state.view];
+  $('#title').textContent = { home: 'Ät först', stock: 'Lager', recipes: 'Recept', more: 'Mer' }[state.view];
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
-  for (const v of ['home', 'stock', 'more']) $(`#view-${v}`).hidden = v !== state.view;
+  for (const v of ['home', 'stock', 'recipes', 'more']) $(`#view-${v}`).hidden = v !== state.view;
   if (state.view === 'home') renderHome();
   if (state.view === 'stock') renderStock();
+  if (state.view === 'recipes') renderRecipes();
   if (state.view === 'more') renderMore();
 }
 
@@ -693,7 +694,9 @@ async function undo() {
   const u = state.undo;
   if (!u) return;
   state.undo = null;
-  if (u.type === 'remove') {
+  if (u.type === 'cook') await undoCook(u);
+  else if (u.type === 'recipe') await undoRecipeDelete(u);
+  else if (u.type === 'remove') {
     const removed = { ...u.lot, status: 'removed', deleted: true, updatedAt: new Date().toISOString() };
     await db.put('lots', removed);
     state.lots = state.lots.filter(l => l.id !== u.lot.id);
@@ -813,6 +816,7 @@ async function load() {
     for (const p of missing) state.products.set(p.id, p);
   }
   state.lots = (await db.all('lots')).filter(l => l.status === 'active' && !l.deleted);
+  state.recipes = (await db.all('recipes')).filter(r => !r.deleted);
   for (const ph of await db.all('photos')) {
     if (!state.photoUrls.has(ph.id)) state.photoUrls.set(ph.id, URL.createObjectURL(ph.blob));
   }
@@ -868,6 +872,7 @@ function bind() {
       input.click();
     }
   });
+  bindRecipes();
   $('#sheet-backdrop').addEventListener('click', closeSheet);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
   // Datumen räknas om när appen kommer tillbaka från bakgrunden (t.ex. nästa morgon).
@@ -884,6 +889,16 @@ function bind() {
     if ($('#sheet').hidden) render();
   });
   Sync.on(() => renderSyncCard());
+  // Delat från en annan app (Android) eller länk med ?url=: öppna receptfliken och hämta.
+  const shared = new URLSearchParams(location.search);
+  const sharedText = [shared.get('url'), shared.get('text')].filter(Boolean).join(' ');
+  if (sharedText) {
+    history.replaceState(null, '', location.pathname);
+    state.view = 'recipes';
+    render();
+    $('#r-url').value = sharedText;
+    importRecipe(sharedText);
+  }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

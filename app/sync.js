@@ -62,7 +62,7 @@ const Sync = (() => {
 
   // ---------- Ner ----------
   async function apply(row) {
-    if (!['products', 'lots', 'events'].includes(row.kind)) return false;
+    if (!SYNC_STORES.includes(row.kind)) return false;
     const local = await db.get(row.kind, row.id);
     if (local && stamp(local) >= stamp(row.data)) return false;
     await db.put(row.kind, row.data, { silent: true });
@@ -159,6 +159,7 @@ const Sync = (() => {
     for (const p of await db.all('products')) if (p.custom || p.uses) entries.push({ kind: 'products', recId: p.id });
     for (const l of await db.all('lots')) entries.push({ kind: 'lots', recId: l.id });
     for (const e of await db.all('events')) entries.push({ kind: 'events', recId: e.id });
+    for (const r of await db.all('recipes')) entries.push({ kind: 'recipes', recId: r.id });
     for (const ph of await db.all('photos')) entries.push({ kind: 'photo', recId: ph.id });
     await db.putMany('outbox', entries.map(e => ({ ...e, id: e.kind + '|' + e.recId, at: now })));
   }
@@ -191,6 +192,12 @@ const Sync = (() => {
       document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
       emit();
       if (status.user && status.household) start();
+    },
+
+    async fetchRecipe(url) {
+      const { data, error } = await client.rpc('fetch_recipe', { p_url: url });
+      if (error) throw error;
+      return data;
     },
 
     async queuePhoto(id) {

@@ -28,6 +28,7 @@
   <main>
     <section id="view-home" class="view"></section>
     <section id="view-stock" class="view" hidden></section>
+    <section id="view-recipes" class="view" hidden></section>
     <section id="view-more" class="view" hidden></section>
   </main>
 
@@ -39,6 +40,10 @@
     <button data-view="stock">
       <svg viewBox="0 0 24 24"><path d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm1 2v6h14V5H5Zm0 8v6h14v-6H5Zm2-6h4v2H7V7Zm0 8h4v2H7v-2Z"/></svg>
       <span>Lager</span>
+    </button>
+    <button data-view="recipes">
+      <svg viewBox="0 0 24 24"><path d="M6 2h11a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm0 2v16h11V4H6Zm2 3h7v2H8V7Zm0 4h7v2H8v-2Zm0 4h4v2H8v-2Z"/></svg>
+      <span>Recept</span>
     </button>
     <button data-view="more">
       <svg viewBox="0 0 24 24"><path d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
@@ -57,6 +62,8 @@
   <script src="catalog.js"></script>
   <script src="db.js"></script>
   <script src="sync.js"></script>
+  <script src="recipes.js"></script>
+  <script src="recipe-view.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

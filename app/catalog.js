@@ -155,6 +155,8 @@ Majs fryst|Grönsaker|g|frys|365
 Haricots verts|Grönsaker|g|kyl|5
 Wokgrönsaker frysta|Grönsaker|g|frys|365
 Sparris|Grönsaker|g|kyl|4
+Fänkål|Grönsaker|st|kyl|10
+Syltlök|Skafferi|st|skafferi|730|30
 Ingefära|Grönsaker|g|kyl|21
 Färsk basilika|Grönsaker|st|kyl|7
 Färsk persilja|Grönsaker|st|kyl|7
@@ -168,6 +170,7 @@ Surdegsbröd|Bröd|st|skafferi|4
 Baguette|Bröd|st|skafferi|2
 Bröd fryst|Bröd|st|frys|90
 Knäckebröd|Bröd|förp|skafferi|180
+Ströbröd|Bröd|g|skafferi|365
 Tortillabröd|Bröd|förp|skafferi|30|7
 Hamburgerbröd|Bröd|förp|skafferi|7
 Korvbröd|Bröd|förp|skafferi|7
@@ -214,6 +217,7 @@ Svarta bönor|Skafferi|st|skafferi|1095|3
 Linser röda|Skafferi|g|skafferi|730
 Buljong|Skafferi|st|skafferi|730
 Fond|Skafferi|st|skafferi|365|30
+Olja|Skafferi|l|skafferi|365|180
 Olivolja|Skafferi|l|skafferi|540|180
 Rapsolja|Skafferi|l|skafferi|365|180
 Sesamolja|Skafferi|dl|skafferi|365|180

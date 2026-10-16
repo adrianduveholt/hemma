@@ -154,7 +154,7 @@ main { padding: 4px 16px 0; }
 }
 .btn.primary { background: var(--accent); color: var(--on-accent); }
 /* Spara-knappen ligger kvar i nederkant när bladet scrollas. */
-#f-save { position: sticky; bottom: 0; box-shadow: 0 -10px 16px var(--surface); }
+#f-save, .sticky-save { position: sticky; bottom: 0; box-shadow: 0 -10px 16px var(--surface); }
 .btn.danger { background: var(--bad-soft); color: var(--bad); }
 .btn-row { display: flex; gap: 8px; }
 .btn-row .btn { flex: 1; }
@@ -229,3 +229,19 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-top: 12px; }
 .card h3 { margin: 0 0 6px; font-size: 17px; }
 .card p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+
+/* Recept */
+.import { margin-top: 4px; }
+.ings, .cook { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.ing, .cook-row { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.ing:first-child, .cook-row:first-child { border-top: 0; }
+.ing-main { flex: 1; min-width: 0; }
+.ing-sub { color: var(--muted); font-size: 13px; }
+.ing-mark { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; background: var(--surface-2); color: var(--muted); }
+.ing.have .ing-mark { background: var(--accent-soft); color: var(--ok); }
+.ing.miss .ing-mark { background: var(--bad-soft); color: var(--bad); }
+.cook-row { cursor: pointer; }
+.cook-row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+.cook-qty { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.cook-qty input { width: 72px; height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 16px; text-align: right; padding: 0 8px; }
+.tabs button span { white-space: nowrap; }

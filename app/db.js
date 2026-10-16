@@ -2,10 +2,10 @@
 // Allt har uuid-id, updatedAt och mjuk radering (deleted) så att samma poster
 // kan synkas mellan flera telefoner i ett senare steg.
 const DB_NAME = 'inventering';
-const DB_VERSION = 2;
-const STORES = ['products', 'lots', 'events', 'photos', 'meta', 'outbox'];
+const DB_VERSION = 3;
+const STORES = ['products', 'lots', 'events', 'photos', 'meta', 'outbox', 'recipes'];
 // Ändringar i de här lagren köas för uppladdning till hushållets databas.
-const SYNC_STORES = ['products', 'lots', 'events'];
+const SYNC_STORES = ['products', 'lots', 'events', 'recipes'];
 
 let dbPromise = null;
 
