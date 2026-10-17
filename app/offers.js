@@ -238,6 +238,29 @@ function bindStoreCard(root) {
 // ---------- Alla erbjudanden ----------
 // Visas i Inköp när man växlar till "Erbjudanden". Erbjudanden som matchar era varor märks "För er".
 const offerFilter = { q: '', cat: 'Alla' };
+// Avdelningar som inte är mat hamnar sist.
+const NONFOOD = ['Hem & fritid', 'Hälsa & skönhet', 'Djur'];
+function catOrder(a, b) {
+  const r = c => (c === 'För er' ? -1 : NONFOOD.includes(c) ? 1 + NONFOOD.indexOf(c) : 0);
+  return r(a) - r(b) || a.localeCompare(b, 'sv');
+}
+// Hopfällda avdelningar kommer man ihåg per telefon.
+function collapsedCats() {
+  try { return new Set(JSON.parse(localStorage.getItem('hemma-offer-collapsed') || '[]')); } catch { return new Set(); }
+}
+function saveCollapsed(set) {
+  try { localStorage.setItem('hemma-offer-collapsed', JSON.stringify([...set])); } catch {}
+}
+function toggleOfferCat(name) {
+  const set = collapsedCats();
+  set.has(name) ? set.delete(name) : set.add(name);
+  saveCollapsed(set);
+  renderShop();
+}
+function setAllOfferCats(collapse, names) {
+  saveCollapsed(collapse ? new Set(names) : new Set());
+  renderShop();
+}
 
 // Koppla ett erbjudande till en vara i katalogen (streckkod först, annars namn).
 // Resultatet sparas tills Inköp ritas om från början, så att sökningen går snabbt.
@@ -284,12 +307,12 @@ function renderAllOffers(el) {
   const mine = new Set(relevantOffers().map(h => h.offer.id));
   const onList = new Set(openItems().map(i => i.productId).filter(Boolean));
   const onListNames = new Set(openItems().map(i => norm(i.name)));
-  const cats = [...new Set(list.map(o => o.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'sv'));
+  const cats = [...new Set(list.map(o => o.category).filter(Boolean))].sort(catOrder);
   const q = norm(offerFilter.q);
   const shown = list
     .filter(o => offerFilter.cat === 'Alla' || (offerFilter.cat === 'För er' ? mine.has(o.id) : o.category === offerFilter.cat))
     .filter(o => !q || norm(`${o.name} ${o.brand}`).includes(q))
-    .sort((a, b) => (mine.has(b.id) - mine.has(a.id)) || a.category.localeCompare(b.category, 'sv') || a.name.localeCompare(b.name, 'sv'));
+    .sort((a, b) => (mine.has(b.id) - mine.has(a.id)) || catOrder(a.category, b.category) || a.name.localeCompare(b.name, 'sv'));
 
   const groups = [];
   for (const o of shown) {
@@ -297,13 +320,18 @@ function renderAllOffers(el) {
     if (!groups.length || groups[groups.length - 1].name !== g) groups.push({ name: g, items: [] });
     groups[groups.length - 1].items.push(o);
   }
+  // Vid sökning eller vald avdelning visas allt utfällt, annars som man lämnade det.
+  const collapsed = q || offerFilter.cat !== 'Alla' ? new Set() : collapsedCats();
+  const allCollapsed = groups.length && groups.every(g => collapsed.has(g.name));
 
   el.innerHTML = `${shopModeHtml()}
     <div class="field offer-search"><input id="offer-q" type="search" placeholder="Sök bland erbjudandena" value="${esc(offerFilter.q)}" autocomplete="off"></div>
     <div class="filters">${['Alla', ...(mine.size ? ['För er'] : []), ...cats].map(c =>
       `<button class="chip ${c === offerFilter.cat ? 'on' : ''}" data-offer-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-    ${groups.map(g => `<div class="group"><h2>${esc(g.name)}</h2><span class="count">${g.items.length}</span></div>
-      <div class="list">${g.items.map(o => {
+    ${!q && offerFilter.cat === 'Alla' && groups.length > 1 ? `<div class="collapse-all"><button class="link-btn quiet" data-offer-all="${allCollapsed ? 'open' : 'close'}">${allCollapsed ? 'Fäll ut alla' : 'Fäll ihop alla'}</button></div>` : ''}
+    ${groups.map(g => `<button class="group group-toggle ${collapsed.has(g.name) ? 'closed' : ''}" data-offer-group="${esc(g.name)}" aria-expanded="${!collapsed.has(g.name)}">
+        <h2><span class="chev" aria-hidden="true">›</span> ${esc(g.name)}</h2><span class="count">${g.items.length}</span></button>
+      ${collapsed.has(g.name) ? '' : `<div class="list">${g.items.map(o => {
         const p = productForOffer(o);
         const listed = p ? onList.has(p.id) : onListNames.has(norm(o.name));
         return `<div class="emptied-row offer-row">
@@ -313,9 +341,10 @@ function renderAllOffers(el) {
           ${listed ? '<span class="on-list" title="Står på listan">✓</span>'
             : `<button class="icon-mini add" data-offer-any="${esc(o.id)}" aria-label="Lägg ${esc(o.name)} på listan">+</button>`}
         </div>`;
-      }).join('')}</div>`).join('') || '<p class="meta">Inga erbjudanden matchar.</p>'}
+      }).join('')}</div>`}`).join('') || '<p class="meta">Inga erbjudanden matchar.</p>'}
     <p class="meta"><a href="https://www.ica.se/erbjudanden/${esc(slug)}/" target="_blank" rel="noopener">Öppna erbjudandena på ica.se</a></p>`;
 
+  el.dataset.groups = JSON.stringify(groups.map(g => g.name));
   const input = el.querySelector('#offer-q');
   input.addEventListener('input', () => {
     offerFilter.q = input.value;

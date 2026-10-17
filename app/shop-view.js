@@ -413,6 +413,10 @@ function bindShop() {
     if (mode) { state.shopMode = mode.dataset.shopMode; renderShop(); window.scrollTo(0, 0); return; }
     const cat = e.target.closest('[data-offer-cat]');
     if (cat) { offerFilter.cat = cat.dataset.offerCat; renderShop(); return; }
+    const grp = e.target.closest('[data-offer-group]');
+    if (grp) { toggleOfferCat(grp.dataset.offerGroup); return; }
+    const all = e.target.closest('[data-offer-all]');
+    if (all) { setAllOfferCats(all.dataset.offerAll === 'close', JSON.parse($('#view-shop').dataset.groups || '[]')); return; }
     const any = e.target.closest('[data-offer-any]');
     if (any) { addAnyOffer(any.dataset.offerAny); return; }
     if (act === 'pick-store') { state.view = 'more'; render(); setTimeout(() => $('#store-card')?.scrollIntoView({ block: 'center' }), 50); return; }
