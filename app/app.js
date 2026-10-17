@@ -64,6 +64,7 @@ const state = {
   shopping: [],
   events: [],
   recipeList: 'Alla',
+  history: [],
   settings: {},
   offers: null,
   extraLists: [],
@@ -514,10 +515,33 @@ async function syncAction(action) {
 // ---------- Blad ----------
 function openSheet(html, onMount) {
   const sheet = $('#sheet');
-  sheet.innerHTML = `<div class="grab"></div>${html}`;
+  sheet.innerHTML = `<div class="sheet-top"><div class="grab"></div><button class="sheet-close" type="button" aria-label="Stäng">✕</button></div>${html}`;
   sheet.hidden = false;
+  sheet.scrollTop = 0;
   $('#sheet-backdrop').hidden = false;
+  sheet.querySelector('.sheet-close').addEventListener('click', closeSheet);
+  bindSheetDrag(sheet);
+  // Telefonens bakåtknapp (Android) ska stänga bladet, inte lämna appen.
+  if (!history.state?.sheet) history.pushState({ sheet: 1 }, '');
   onMount?.(sheet);
+}
+
+// Dra bladet nedåt i överkanten för att stänga det.
+function bindSheetDrag(sheet) {
+  const top = sheet.querySelector('.sheet-top');
+  let startY = null, dy = 0;
+  top.addEventListener('touchstart', e => { startY = e.touches[0].clientY; dy = 0; sheet.style.transition = 'none'; }, { passive: true });
+  top.addEventListener('touchmove', e => {
+    if (startY === null) return;
+    dy = Math.max(0, e.touches[0].clientY - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  top.addEventListener('touchend', () => {
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    if (dy > 80) closeSheet();
+    startY = null;
+  });
 }
 function closeSheet() {
   state.afterAdd = null;
@@ -525,6 +549,7 @@ function closeSheet() {
   $('#sheet').hidden = true;
   $('#sheet-backdrop').hidden = true;
   $('#sheet').innerHTML = '';
+  $('#sheet').style.transform = '';
 }
 
 function chipsHtml(name, options, selected) {
@@ -699,13 +724,33 @@ function splitSizeFor(lot, product) {
   return lot.qty > size * 1.05 ? size : null;
 }
 
+// Ångra "öppnad": datumet tillbaka, och en utbruten förpackning läggs tillbaka i den oöppnade raden.
+async function unOpen(lot) {
+  const best = lot.preOpenBest !== undefined ? lot.preOpenBest : lot.bestBefore;
+  const sibling = state.lots.find(l => l.id !== lot.id && l.productId === lot.productId && !l.openedAt
+    && l.unit === lot.unit && l.place === lot.place && (l.bestBefore || '') === (best || ''));
+  if (!sibling) {
+    updateLot(lot, { openedAt: null, bestBefore: best, preOpenBest: undefined }, 'unopened', 0, `${lot.name} markerad som inte öppnad`);
+    return;
+  }
+  const now = new Date().toISOString();
+  const befores = [{ ...lot }, { ...sibling }];
+  const merged = { ...sibling, qty: roundQty(sibling.qty + lot.qty, sibling.unit), updatedAt: now };
+  await db.put('lots', merged);
+  await db.put('lots', { ...lot, status: 'removed', deleted: true, updatedAt: now });
+  state.lots = state.lots.filter(l => l.id !== lot.id && l.id !== sibling.id).concat(merged);
+  closeSheet();
+  render();
+  toast(`${lot.name} tillbaka bland de oöppnade · ${fmtQty(merged.qty, merged.unit)}`, { type: 'cook', befores, eventIds: [] });
+}
+
 async function openOnePack(lot, size, changes) {
   const now = new Date().toISOString();
   const before = { ...lot };
   const rest = { ...lot, qty: roundQty(lot.qty - size, lot.unit), updatedAt: now };
   const opened = {
     ...lot, id: uuid(), qty: size, initialQty: size, openedAt: changes.openedAt,
-    bestBefore: changes.bestBefore ?? lot.bestBefore, updatedAt: now,
+    bestBefore: changes.bestBefore ?? lot.bestBefore, preOpenBest: lot.bestBefore ?? null, updatedAt: now,
   };
   await db.put('lots', rest);
   await db.put('lots', opened);
@@ -753,6 +798,7 @@ function openLotSheet(lot) {
     ${!staple && countable && lot.qty > 1 ? `<div class="field"><button class="btn" data-act="minus1">Ta ut 1 ${lot.unit}</button></div>` : ''}
     <div class="btn-row">
       ${lot.openedAt ? '' : `<button class="btn" data-act="open">${split ? 'Öppna en förp' : 'Öppnad'}${openDays ? ` <small>(${openDays} d)</small>` : ''}</button>`}
+      ${lot.openedAt ? `<button class="btn" data-act="unopen">↶ Inte öppnad</button>` : ''}
       ${canFreeze ? `<button class="btn" data-act="freeze">🧊 Frys in</button>` : ''}
     </div>
     <div class="btn-row" style="margin-top:8px">
@@ -779,7 +825,7 @@ function openLotSheet(lot) {
     });
     root.querySelector('[data-act="minus1"]')?.addEventListener('click', () => updateLot(lot, { qty: lot.qty - 1 }, 'used', 1, `Tog ut 1 ${lot.unit} ${lot.name}`));
     root.querySelector('[data-act="open"]')?.addEventListener('click', () => {
-      const changes = { openedAt: todayIso() };
+      const changes = { openedAt: todayIso(), preOpenBest: lot.bestBefore ?? null };
       if (openDays) {
         const after = addDays(todayIso(), openDays);
         if (!lot.bestBefore || after < lot.bestBefore) changes.bestBefore = after;
@@ -787,6 +833,7 @@ function openLotSheet(lot) {
       if (split) { openOnePack(lot, split, changes); return; }
       updateLot(lot, changes, 'opened', 0, changes.bestBefore ? `Öppnad – håller till ${shortDate(changes.bestBefore)}` : `${lot.name} markerad som öppnad`);
     });
+    root.querySelector('[data-act="unopen"]')?.addEventListener('click', () => unOpen(lot));
     root.querySelector('[data-act="freeze"]')?.addEventListener('click', () =>
       updateLot(lot, { place: 'frys', bestBefore: addDays(todayIso(), FREEZE_DAYS) }, 'frozen', 0, `${lot.name} infryst · håller till ${shortDate(addDays(todayIso(), FREEZE_DAYS))}`));
     root.querySelector('[data-act="discard"]').addEventListener('click', () =>
@@ -910,11 +957,56 @@ async function deleteEvent(id) {
 }
 
 // ---------- Ångra ----------
-async function undo() {
-  const u = state.undo;
-  if (!u) return;
-  state.undo = null;
+// Varje ändring som går att ångra hamnar i en historik (de 20 senaste, ett dygn bakåt).
+// ↶ överst backar den senaste; Ångra i meddelandet backar just den ändringen.
+const HISTORY_KEY = 'hemma-history';
+const HISTORY_MAX = 20;
+
+function loadHistory() {
+  try {
+    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return list.filter(h => Date.now() - h.at < 24 * 3600 * 1000);
+  } catch { return []; }
+}
+function saveHistory() {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history)); } catch {}
+  const btn = $('#undo-btn');
+  if (btn) btn.hidden = !state.history.length;
+}
+function pushHistory(label, info) {
+  const entry = { id: uuid(), label, info, at: Date.now() };
+  state.history = [...state.history, entry].slice(-HISTORY_MAX);
+  saveHistory();
+  return entry.id;
+}
+
+async function undoEntry(id) {
+  const i = state.history.findIndex(h => h.id === id);
+  if (i < 0) return;
+  const [entry] = state.history.splice(i, 1);
+  saveHistory();
+  await performUndo(entry.info);
+  hideToast();
+  render();
+  toast(`Ångrat: ${entry.label}`);
+}
+function undoLast() {
+  const last = state.history[state.history.length - 1];
+  if (last) undoEntry(last.id);
+}
+// Kvar för gamla anrop: ångra det senaste.
+function undo() { return undoLast(); }
+
+async function performUndo(u) {
   if (u.type === 'cook') await undoCook(u);
+  else if (u.type === 'shop-added') {
+    const item = state.shopping.find(i => i.id === u.itemId);
+    if (item) {
+      const del = { ...item, deleted: true, updatedAt: new Date().toISOString() };
+      await db.put('shopping', del);
+      state.shopping = state.shopping.map(i => i.id === del.id ? del : i);
+    }
+  }
   else if (u.type === 'shop') await undoShop(u);
   else if (u.type === 'recipe') await undoRecipeDelete(u);
   else if (u.type === 'split') {
@@ -940,23 +1032,21 @@ async function undo() {
     if (restored.status === 'active') state.lots.push(restored);
     if (u.eventId) await deleteEvent(u.eventId);
   }
-  hideToast();
-  render();
 }
 
 let toastTimer = null;
 // extra: { label, run } – en andra knapp i meddelandet, t.ex. "På listan".
 function toast(message, undoInfo, extra) {
   const el = $('#toast');
-  state.undo = undoInfo || null;
+  const entryId = undoInfo ? pushHistory(message, undoInfo) : null;
   el.innerHTML = `<span>${esc(message)}</span><span class="toast-actions">${extra ? `<button id="toast-extra">${esc(extra.label)}</button>` : ''}${undoInfo ? '<button id="undo">Ångra</button>' : ''}</span>`;
   el.hidden = false;
-  el.querySelector('#undo')?.addEventListener('click', undo);
+  el.querySelector('#undo')?.addEventListener('click', () => undoEntry(entryId));
   el.querySelector('#toast-extra')?.addEventListener('click', () => { hideToast(); extra.run(); });
   clearTimeout(toastTimer);
   toastTimer = setTimeout(hideToast, extra ? 8000 : undoInfo ? 6000 : 2500);
 }
-function hideToast() { $('#toast').hidden = true; state.undo = null; }
+function hideToast() { $('#toast').hidden = true; }
 
 // ---------- Bilder ----------
 function takePhoto() {
@@ -1120,6 +1210,11 @@ function bind() {
 }
 
 (async function init() {
+  state.history = loadHistory();
+  saveHistory();
+  $('#undo-btn').addEventListener('click', undoLast);
+  // Bakåtknappen stänger ett öppet blad.
+  window.addEventListener('popstate', () => { if (!$('#sheet').hidden) closeSheet(); });
   bind();
   await load();
   render();

@@ -350,3 +350,14 @@ button.ing:active { background: var(--surface-2); }
 .offer-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .on-list { width: 36px; text-align: center; color: var(--ok); font-weight: 700; padding-top: 8px; }
 .offer-tag { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+
+/* Stäng-knapp och dragzon överst i bladet */
+.sheet { transition: transform .18s ease-out; }
+.sheet-top { position: sticky; top: -10px; z-index: 2; margin: -10px -16px 6px; padding: 10px 16px 6px; background: var(--surface); display: flex; justify-content: center; align-items: center; min-height: 44px; touch-action: none; }
+.sheet-top .grab { margin: 0; }
+.sheet-close { position: absolute; right: 10px; top: 6px; width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--text); font-size: 16px; cursor: pointer; }
+.sheet-close:active { background: var(--line); }
+/* Ångra överst */
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.undo-btn { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.undo-btn:active { background: var(--surface-2); }
