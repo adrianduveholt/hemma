@@ -319,3 +319,5 @@ button.ing:active { background: var(--surface-2); }
 .bulk-line { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 14px; }
 .bulk-line:first-child { border-top: 0; }
 #b-log { max-height: 40vh; overflow: auto; margin-top: 8px; }
+
+.url-box { width: 100%; min-height: 52px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); font-size: 16px; padding: 12px; resize: vertical; font-family: inherit; }

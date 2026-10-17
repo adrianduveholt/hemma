@@ -177,8 +177,8 @@ function renderRecipes() {
   el.innerHTML = `
     <div class="card import">
       <h3>Lägg till recept från ICA</h3>
-      <p>Tryck på Dela i receptet i ICA-appen, välj Kopiera och klistra in länken här. Flera länkar på en gång går också bra.</p>
-      <div class="field"><input id="r-url" type="text" inputmode="url" autocapitalize="off" placeholder="https://www.ica.se/recept/…"></div>
+      <p>Tryck på Dela i receptet i ICA-appen och välj Kopiera, sedan Klistra in här. Vill du ta flera: kopiera och klistra in ett i taget och tryck Hämta när alla ligger i rutan.</p>
+      <div class="field"><textarea id="r-url" class="url-box" rows="2" autocapitalize="off" placeholder="https://www.ica.se/recept/…"></textarea></div>
       <div class="btn-row">
         <button class="btn" data-recipe-act="paste">Klistra in</button>
         <button class="btn primary" data-recipe-act="import">Hämta recept</button>
@@ -212,13 +212,13 @@ function icaLinks(text) {
 
 function openBulkImport(urls) {
   const lists = recipeListNames();
-  // Flera länkar på en gång är oftast favoriterna; en vald lista går före.
-  const preset = state.recipeList !== 'Alla' ? state.recipeList : DEFAULT_LIST;
+  // Bara den flik man själv står i är förvald – annars hamnar recepten inte i någon lista.
+  const preset = state.recipeList !== 'Alla' ? state.recipeList : '';
   openSheet(`<div id="bulk">
-    <div class="sheet-head"><div><h3>Hämta ${urls.length} recept</h3><div class="sub">Från ICA, ett i taget</div></div></div>
+    <div class="sheet-head"><div><h3>Hämta ${urls.length} länkar</h3><div class="sub">Från ICA, en i taget</div></div></div>
     <div class="field"><label for="b-list">Lägg i lista</label>
       <select id="b-list">
-        <option value="">Ingen lista</option>
+        <option value="" ${preset ? '' : 'selected'}>Ingen lista</option>
         ${[...new Set([DEFAULT_LIST, ...lists])].sort(listOrder).map(n => `<option ${n === preset ? 'selected' : ''}>${esc(n)}</option>`).join('')}
         <option value="__new">Ny lista…</option>
       </select></div>
@@ -236,6 +236,7 @@ function openBulkImport(urls) {
       const log = root.querySelector('#b-log');
       log.hidden = false;
       let ok = 0, had = 0, failed = 0;
+      const seen = new Set();
       for (const [i, url] of urls.entries()) {
         status.textContent = `Hämtar ${i + 1} av ${urls.length}…`;
         let line;
@@ -244,10 +245,13 @@ function openBulkImport(urls) {
           const ld = findRecipe(res.blocks || []);
           if (!ld) throw new Error('inget recept på sidan');
           const recipe = recipeFromLd(ld, res.url || url);
+          // ICA:s delningstext kan innehålla flera länkar till samma recept.
+          if (seen.has(recipe.id)) { line = `· ${esc(recipe.title)} – samma recept igen, hoppas över`; log.insertAdjacentHTML('beforeend', `<div class="bulk-line">${line}</div>`); continue; }
+          seen.add(recipe.id);
           const existing = state.recipes.find(r => r.id === recipe.id);
           if (existing) {
             if (listName) await setRecipeLists(existing, [...(existing.lists || []), listName]);
-            had++; line = `↺ ${esc(existing.title)} – fanns redan`;
+            had++; line = `↺ ${esc(existing.title)} – fanns redan i Hemma${listName ? `, nu även i ${esc(listName)}` : ''}`;
           } else {
             recipe.lists = listName ? [listName] : [];
             await db.put('recipes', recipe);
@@ -259,8 +263,8 @@ function openBulkImport(urls) {
         }
         log.insertAdjacentHTML('beforeend', `<div class="bulk-line">${line}</div>`);
       }
-      if (listName) state.recipeList = listName;
-      status.textContent = `Klart: ${ok} nya${had ? `, ${had} fanns redan` : ''}${failed ? `, ${failed} misslyckades` : ''}${listName ? ` · i ${listName}` : ''}.`;
+      $('#r-url') && ($('#r-url').value = '');
+      status.textContent = `Klart: ${ok} nya${had ? `, ${had} fanns redan i Hemma` : ''}${failed ? `, ${failed} misslyckades` : ''}${listName ? ` · i ${listName}` : ''}.`;
       e.target.textContent = 'Stäng';
       e.target.disabled = false;
       e.target.onclick = () => { closeSheet(); renderRecipes(); };
@@ -323,6 +327,8 @@ async function importRecipe(raw) {
     }
     recipe.lists = list ? [list] : [];
     await db.put('recipes', recipe);
+    $('#r-url').value = '';
+    if (status) status.textContent = list ? `Sparat i ${list}.` : '';
     state.recipes.push(recipe);
     renderRecipes();
     openRecipeSheet(recipe);
@@ -539,8 +545,10 @@ function bindRecipes() {
     if (act === 'paste') {
       try {
         const text = await navigator.clipboard.readText();
-        $('#r-url').value = text;
-        importRecipe(text);
+        const box = $('#r-url');
+        box.value = [box.value.trim(), text.trim()].filter(Boolean).join('\n');
+        const n = icaLinks(box.value).length;
+        $('#r-status').textContent = n ? `${n} ${n === 1 ? 'länk' : 'länkar'} i rutan – klistra in fler eller tryck Hämta recept.` : 'Hittade ingen ICA-länk i det du kopierade.';
       } catch {
         $('#r-url').focus();
         $('#r-status').textContent = 'Tryck länge i fältet och välj Klistra in.';
@@ -548,6 +556,6 @@ function bindRecipes() {
     }
   });
   $('#view-recipes').addEventListener('keydown', e => {
-    if (e.target.id === 'r-url' && e.key === 'Enter') importRecipe(e.target.value);
+    if (e.target.id === 'r-url' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); importRecipe(e.target.value); }
   });
 }
