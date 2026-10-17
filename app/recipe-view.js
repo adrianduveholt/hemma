@@ -170,14 +170,14 @@ function renderRecipes() {
     .map(r => ({ r, c: coverage(analyzeRecipe(r)) }))
     .sort((a, b) => (b.c.have / (b.c.total || 1)) - (a.c.have / (a.c.total || 1)) || a.r.title.localeCompare(b.r.title, 'sv'));
   const listChips = `<div class="filters list-chips">
-    ${['Alla', ...lists].map(n => `<button class="chip ${n === current ? 'on' : ''}" data-rlist="${esc(n)}">${esc(n)}${n === 'Alla' ? ` ${state.recipes.length}` : ` ${state.recipes.filter(r => r.lists?.includes(n)).length}`}</button>`).join('')}
+    ${['Alla', ...lists].map(n => `<button class="chip ${n === current ? 'on' : ''}" data-rlist="${esc(n)}">${esc(n)} <span class="chip-n">${n === 'Alla' ? state.recipes.length : state.recipes.filter(r => r.lists?.includes(n)).length}</span></button>`).join('')}
     <button class="chip" data-recipe-act="new-list">+ Ny lista</button>
   </div>`;
 
   el.innerHTML = `
     <div class="card import">
       <h3>Lägg till recept från ICA</h3>
-      <p>Tryck på Dela i receptet i ICA-appen och välj Kopiera, sedan Klistra in här. Vill du ta flera: kopiera och klistra in ett i taget och tryck Hämta när alla ligger i rutan.</p>
+      <p>Dela → Kopiera i ICA-appen och klistra in här. Flera recept? Klistra in ett i taget och tryck Hämta.</p>
       <div class="field"><textarea id="r-url" class="url-box" rows="2" autocapitalize="off" placeholder="https://www.ica.se/recept/…"></textarea></div>
       <div class="btn-row">
         <button class="btn" data-recipe-act="paste">Klistra in</button>
@@ -186,8 +186,8 @@ function renderRecipes() {
       <p class="meta" id="r-status"></p>
     </div>
     <div class="btn-row ai-row">
-      ${state.lots.length ? `<button class="btn ai-btn" data-recipe-act="ai">✨ Fråga en AI</button>` : ''}
-      <button class="btn ai-btn" data-recipe-act="ai-import">📥 Importera AI-svar</button>
+      ${state.lots.length ? `<button class="btn ai-btn slim" data-recipe-act="ai">✨ Fråga AI</button>` : ''}
+      <button class="btn ai-btn slim" data-recipe-act="ai-import">📥 Importera svar</button>
     </div>
     ${listChips}
     ${current !== 'Alla' && recipes.length ? `<button class="btn" data-recipe-act="shop-list">🛒 Handla till ${esc(current)}</button>` : ''}
@@ -370,7 +370,7 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
         ${[...new Set([DEFAULT_LIST, ...recipeListNames()])].sort(listOrder).map(n => `<button type="button" class="chip ${recipe.lists?.includes(n) ? 'on' : ''}" data-tl="${esc(n)}">${esc(n)}</button>`).join('')}
         <button type="button" class="chip" data-tl-new>+ ${esc(nextWeekName())}</button>
       </div></div>
-    ${recipe.servings ? `<div class="field"><span class="label">${esc(recipe.servingsLabel)}</span>
+    ${recipe.servings ? `<div class="field"><span class="label">${esc(recipe.servingsLabel.charAt(0).toUpperCase() + recipe.servingsLabel.slice(1))}</span>
       <div class="qty"><button class="step" data-serv="-1" aria-label="Färre">−</button>
       <input id="r-serv" value="${servings}" inputmode="numeric" readonly>
       <button class="step" data-serv="1" aria-label="Fler">+</button></div></div>` : ''}

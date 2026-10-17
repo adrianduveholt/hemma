@@ -1,9 +1,10 @@
 // Cachar appens filer så att den startar utan nät. Höj VERSION vid varje ändring.
-const VERSION = 'hemma-v24';
+const VERSION = 'hemma-v25';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'db.js', 'sync.js', 'config.js', 'catalog.js', 'recipes.js', 'recipe-view.js', 'shop-view.js', 'scan.js', 'ai-export.js', 'offers.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-180.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' – hämta förbi webbläsarens cache så att offlinekopian alltid är den nya versionen.
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));

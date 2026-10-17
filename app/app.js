@@ -389,8 +389,8 @@ function renderStock() {
 
   const counts = Object.fromEntries(PLACES.map(p => [p.id, state.lots.filter(l => l.place === p.id).length]));
   const filters = `<div class="filters">
-    <button class="chip ${state.stockPlace === 'alla' ? 'on' : ''}" data-place="alla">Alla ${state.lots.length}</button>
-    ${PLACES.map(p => `<button class="chip ${state.stockPlace === p.id ? 'on' : ''}" data-place="${p.id}">${p.icon} ${p.label} ${counts[p.id]}</button>`).join('')}
+    <button class="chip ${state.stockPlace === 'alla' ? 'on' : ''}" data-place="alla">Alla <span class="chip-n">${state.lots.length}</span></button>
+    ${PLACES.map(p => `<button class="chip ${state.stockPlace === p.id ? 'on' : ''}" data-place="${p.id}">${p.icon} ${p.label} <span class="chip-n">${counts[p.id]}</span></button>`).join('')}
   </div>`;
 
   if (!state.lots.length) {
@@ -399,7 +399,7 @@ function renderStock() {
   }
   const groups = PLACES.map(p => ({ p, items: lots.filter(l => l.place === p.id).sort((a, b) => a.name.localeCompare(b.name, 'sv') || sortByExpiry(a, b)) }))
     .filter(g => g.items.length);
-  el.innerHTML = `<button class="btn ai-btn" data-action="ai">✨ Receptidéer med AI</button>` + filters + (groups.length ? groups.map(g => `
+  el.innerHTML = `<button class="btn ai-btn slim" data-action="ai">✨ Receptidéer med AI</button>` + filters + (groups.length ? groups.map(g => `
     <div class="group"><h2>${g.p.icon} ${g.p.label}</h2><span class="count">${g.items.length}</span></div>
     <div class="list">${g.items.map(l => rowHtml(l)).join('')}</div>`).join('')
     : emptyHtml('🔍', 'Inga träffar', 'Ingen vara hemma matchar sökningen.'));

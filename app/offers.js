@@ -325,10 +325,10 @@ function renderAllOffers(el) {
   const allCollapsed = groups.length && groups.every(g => collapsed.has(g.name));
 
   el.innerHTML = `${shopModeHtml()}
-    <div class="field offer-search"><input id="offer-q" type="search" placeholder="Sök bland erbjudandena" value="${esc(offerFilter.q)}" autocomplete="off"></div>
+    <div class="offer-tools"><input id="offer-q" type="search" placeholder="Sök bland erbjudandena" value="${esc(offerFilter.q)}" autocomplete="off">
+      ${!q && offerFilter.cat === 'Alla' && groups.length > 1 ? `<button class="link-btn quiet" data-offer-all="${allCollapsed ? 'open' : 'close'}">${allCollapsed ? 'Fäll ut' : 'Fäll ihop'}</button>` : ''}</div>
     <div class="filters">${['Alla', ...(mine.size ? ['För er'] : []), ...cats].map(c =>
       `<button class="chip ${c === offerFilter.cat ? 'on' : ''}" data-offer-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-    ${!q && offerFilter.cat === 'Alla' && groups.length > 1 ? `<div class="collapse-all"><button class="link-btn quiet" data-offer-all="${allCollapsed ? 'open' : 'close'}">${allCollapsed ? 'Fäll ut alla' : 'Fäll ihop alla'}</button></div>` : ''}
     ${groups.map(g => `<button class="group group-toggle ${collapsed.has(g.name) ? 'closed' : ''}" data-offer-group="${esc(g.name)}" aria-expanded="${!collapsed.has(g.name)}">
         <h2><span class="chev" aria-hidden="true">›</span> ${esc(g.name)}</h2><span class="count">${g.items.length}</span></button>
       ${collapsed.has(g.name) ? '' : `<div class="list">${g.items.map(o => {

@@ -378,3 +378,51 @@ button.ing:active { background: var(--surface-2); }
 .group-toggle.closed .chev { transform: none; }
 .group-toggle.closed { margin-bottom: 2px; }
 .collapse-all { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* ---------- Gemensam vertikal rytm i vyerna ----------
+   12 px mellan delar, 20 px före en avsnittsrubrik och 8 px från rubrik till lista.
+   Komponenternas egna ytter-marginaler nollas här så att de inte adderas olika i olika vyer. */
+main { padding-top: 0; }
+main .view { display: flex; flex-direction: column; gap: 12px; padding-top: 8px; }
+main .view > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+main .view > .group, main .view > .group-toggle { margin-top: 8px !important; margin-bottom: -4px !important; }
+main .view > .group:first-child { margin-top: 0 !important; }
+main .view > .filters { padding: 2px 0; }
+main .view > .empty { padding-top: 32px; }
+
+
+/* ---------- Designgenomgång ---------- */
+/* Alla textfält i formulär ser likadana ut, oavsett typ. */
+/* :where() ger låg specificitet, så att t.ex. mängdfältet (.qty input) behåller sin egen stil. */
+.field :where(input:not([type=checkbox]):not([type=radio]):not([type=date]):not([type=file])),
+.offer-tools input {
+  width: 100%; height: 48px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px;
+  -webkit-appearance: none; appearance: none;
+}
+.field input:focus, .offer-tools input:focus, .url-box:focus, .ai-text:focus, select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.field input::-webkit-search-cancel-button { display: none; }
+
+/* Sekundära AI-knappar: lägre och på en rad. */
+.ai-btn.slim { padding: 11px 12px; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-row { gap: 8px; }
+
+/* Antal i filterknappar som egen, dämpad etikett. */
+.chip-n { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 2px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); color: var(--muted); text-align: center; line-height: 18px; }
+.chip.on .chip-n { background: rgba(255,255,255,.25); color: inherit; }
+
+/* Växlaren: vald del tydligt markerad. */
+.seg button.on { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
+
+/* Erbjudanden: sök och Fäll ihop på samma rad. */
+.offer-tools { display: flex; align-items: center; gap: 12px; }
+.offer-tools input { flex: 1; min-width: 0; background: var(--surface); }
+.offer-tools .link-btn { flex: none; }
+
+/* Kortens text och rubriker. */
+.card h3 { margin-bottom: 4px; }
+.card p { line-height: 1.45; }
+.card .field:last-child { margin-bottom: 0; }
