@@ -313,3 +313,9 @@ button.ing:active { background: var(--surface-2); }
 .ai-row { margin: 12px 0 4px; }
 .ai-row .ai-btn { margin: 0; }
 .steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; line-height: 1.5; }
+
+/* Receptlistor */
+.list-chips { margin: 14px 0 6px; }
+.bulk-line { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+.bulk-line:first-child { border-top: 0; }
+#b-log { max-height: 40vh; overflow: auto; margin-top: 8px; }

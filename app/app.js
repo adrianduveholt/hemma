@@ -63,6 +63,8 @@ const state = {
   recipes: [],
   shopping: [],
   events: [],
+  recipeList: 'Alla',
+  extraLists: [],
   photoUrls: new Map(),
   suggestions: [],
   active: 0,

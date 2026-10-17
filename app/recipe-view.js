@@ -124,16 +124,60 @@ function fmtNeed(qty, unit) {
   return unit && unit !== 'st' ? `${n} ${unit}` : n;
 }
 
+// ---------- Receptlistor ----------
+// Ett recept kan ligga i flera listor (recipe.lists), t.ex. Favoritrecept och Vecka 3.
+// Listorna synkas med recepten; en tom lista finns kvar under sessionen tills något läggs i den.
+const DEFAULT_LIST = 'Favoritrecept';
+
+function listOrder(a, b) {
+  const rank = n => n === DEFAULT_LIST ? 0 : /^vecka\s*\d+/i.test(n) ? 1 : 2;
+  const week = n => Number((n.match(/^vecka\s*(\d+)/i) || [])[1] || 0);
+  return rank(a) - rank(b) || week(a) - week(b) || a.localeCompare(b, 'sv');
+}
+function recipeListNames() {
+  const names = new Set(state.extraLists);
+  for (const r of state.recipes || []) for (const l of r.lists || []) names.add(l);
+  return [...names].sort(listOrder);
+}
+function nextWeekName() {
+  const weeks = recipeListNames().map(n => Number((n.match(/^vecka\s*(\d+)/i) || [])[1] || 0));
+  return `Vecka ${Math.max(0, ...weeks) + 1}`;
+}
+async function setRecipeLists(recipe, lists) {
+  const updated = { ...recipe, lists: [...new Set(lists)], updatedAt: new Date().toISOString() };
+  await db.put('recipes', updated);
+  state.recipes = state.recipes.map(r => r.id === updated.id ? updated : r);
+  return updated;
+}
+
+// Handla till en hel lista, t.ex. veckans recept.
+async function shopWholeList(name) {
+  const recipes = state.recipes.filter(r => r.lists?.includes(name));
+  const before = openItems().length;
+  for (const r of recipes) await addMissingFromRecipe(r, r.servings, { silent: true });
+  const added = openItems().length - before;
+  toast(added ? `${added} nya varor på inköpslistan för ${name}` : `Allt till ${name} finns hemma eller står redan på listan`);
+}
+
 // ---------- Listan ----------
 function renderRecipes() {
   const el = $('#view-recipes');
-  const recipes = (state.recipes || []).map(r => ({ r, c: coverage(analyzeRecipe(r)) }))
-    .sort((a, b) => (b.c.have / b.c.total) - (a.c.have / a.c.total) || a.r.title.localeCompare(b.r.title, 'sv'));
+  const lists = recipeListNames();
+  if (state.recipeList !== 'Alla' && !lists.includes(state.recipeList)) state.recipeList = 'Alla';
+  const current = state.recipeList;
+  const recipes = (state.recipes || [])
+    .filter(r => current === 'Alla' || r.lists?.includes(current))
+    .map(r => ({ r, c: coverage(analyzeRecipe(r)) }))
+    .sort((a, b) => (b.c.have / (b.c.total || 1)) - (a.c.have / (a.c.total || 1)) || a.r.title.localeCompare(b.r.title, 'sv'));
+  const listChips = `<div class="filters list-chips">
+    ${['Alla', ...lists].map(n => `<button class="chip ${n === current ? 'on' : ''}" data-rlist="${esc(n)}">${esc(n)}${n === 'Alla' ? ` ${state.recipes.length}` : ` ${state.recipes.filter(r => r.lists?.includes(n)).length}`}</button>`).join('')}
+    <button class="chip" data-recipe-act="new-list">+ Ny lista</button>
+  </div>`;
 
   el.innerHTML = `
     <div class="card import">
       <h3>Lägg till recept från ICA</h3>
-      <p>Tryck på Dela i receptet i ICA-appen, välj Kopiera och klistra in länken här.</p>
+      <p>Tryck på Dela i receptet i ICA-appen, välj Kopiera och klistra in länken här. Flera länkar på en gång går också bra.</p>
       <div class="field"><input id="r-url" type="text" inputmode="url" autocapitalize="off" placeholder="https://www.ica.se/recept/…"></div>
       <div class="btn-row">
         <button class="btn" data-recipe-act="paste">Klistra in</button>
@@ -145,8 +189,10 @@ function renderRecipes() {
       ${state.lots.length ? `<button class="btn ai-btn" data-recipe-act="ai">✨ Fråga en AI</button>` : ''}
       <button class="btn ai-btn" data-recipe-act="ai-import">📥 Importera AI-svar</button>
     </div>
+    ${listChips}
+    ${current !== 'Alla' && recipes.length ? `<button class="btn" data-recipe-act="shop-list">🛒 Handla till ${esc(current)}</button>` : ''}
     ${recipes.length ? `
-      <div class="group"><h2>Sorterat efter vad som finns hemma</h2><span class="count">${recipes.length}</span></div>
+      <div class="group"><h2>${current === 'Alla' ? 'Sorterat efter vad som finns hemma' : esc(current)}</h2><span class="count">${recipes.length}</span></div>
       <div class="list">${recipes.map(({ r, c }) => `
         <button class="row" data-recipe="${esc(r.id)}">
           ${r.image ? `<img class="thumb" src="${esc(r.image)}" alt="" loading="lazy">` : `<span class="thumb">${r.source === 'ai' ? '✨' : '🍽️'}</span>`}
@@ -154,11 +200,107 @@ function renderRecipes() {
           <div class="r-sub">${r.source === 'ai' ? 'AI-förslag · ' : ''}${r.servings ? `${r.servings} ${esc(r.servingsLabel)} · ` : ''}${c.total} ingredienser</div></div>
           <span class="badge ${c.have === c.total ? 'ok' : c.have / c.total >= .6 ? 'warn' : ''}">${c.have} av ${c.total} hemma</span>
         </button>`).join('')}</div>`
+    : current !== 'Alla' ? emptyHtml('📂', `${esc(current)} är tom`, 'Öppna ett recept och välj listan under Listor, eller klistra in ICA-länkar ovan medan listan är vald.')
     : emptyHtml('📖', 'Inga recept än', 'Recept du hämtar från ICA hamnar här, sorterade efter hur mycket av ingredienserna ni redan har hemma.')}`;
+}
+
+// ---------- Massimport ----------
+function icaLinks(text) {
+  const urls = [...String(text).matchAll(/https?:\/\/[^\s<>"')\]]+/g)].map(m => m[0].replace(/[.,;]+$/, ''));
+  return [...new Set(urls.filter(u => /(^|\.)ica\.se\/|ica\.app\.link/i.test(u)))];
+}
+
+function openBulkImport(urls) {
+  const lists = recipeListNames();
+  // Flera länkar på en gång är oftast favoriterna; en vald lista går före.
+  const preset = state.recipeList !== 'Alla' ? state.recipeList : DEFAULT_LIST;
+  openSheet(`<div id="bulk">
+    <div class="sheet-head"><div><h3>Hämta ${urls.length} recept</h3><div class="sub">Från ICA, ett i taget</div></div></div>
+    <div class="field"><label for="b-list">Lägg i lista</label>
+      <select id="b-list">
+        <option value="">Ingen lista</option>
+        ${[...new Set([DEFAULT_LIST, ...lists])].sort(listOrder).map(n => `<option ${n === preset ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+        <option value="__new">Ny lista…</option>
+      </select></div>
+    <div class="field" id="b-new-wrap" hidden><input id="b-new" type="text" placeholder="t.ex. ${esc(nextWeekName())}" value="${esc(nextWeekName())}"></div>
+    <button class="btn primary" data-bulk="go">Hämta</button>
+    <p class="meta" id="b-status"></p>
+    <div class="list" id="b-log" hidden></div>
+  </div>`, root => {
+    const sel = root.querySelector('#b-list');
+    sel.addEventListener('change', () => { root.querySelector('#b-new-wrap').hidden = sel.value !== '__new'; });
+    root.querySelector('[data-bulk="go"]').addEventListener('click', async e => {
+      const listName = sel.value === '__new' ? root.querySelector('#b-new').value.trim() : sel.value;
+      e.target.disabled = true;
+      const status = root.querySelector('#b-status');
+      const log = root.querySelector('#b-log');
+      log.hidden = false;
+      let ok = 0, had = 0, failed = 0;
+      for (const [i, url] of urls.entries()) {
+        status.textContent = `Hämtar ${i + 1} av ${urls.length}…`;
+        let line;
+        try {
+          const res = await Sync.fetchRecipe(url);
+          const ld = findRecipe(res.blocks || []);
+          if (!ld) throw new Error('inget recept på sidan');
+          const recipe = recipeFromLd(ld, res.url || url);
+          const existing = state.recipes.find(r => r.id === recipe.id);
+          if (existing) {
+            if (listName) await setRecipeLists(existing, [...(existing.lists || []), listName]);
+            had++; line = `↺ ${esc(existing.title)} – fanns redan`;
+          } else {
+            recipe.lists = listName ? [listName] : [];
+            await db.put('recipes', recipe);
+            state.recipes.push(recipe);
+            ok++; line = `✓ ${esc(recipe.title)}`;
+          }
+        } catch (err) {
+          failed++; line = `✕ ${esc(url)} – ${esc(err.message || 'fel')}`;
+        }
+        log.insertAdjacentHTML('beforeend', `<div class="bulk-line">${line}</div>`);
+      }
+      if (listName) state.recipeList = listName;
+      status.textContent = `Klart: ${ok} nya${had ? `, ${had} fanns redan` : ''}${failed ? `, ${failed} misslyckades` : ''}${listName ? ` · i ${listName}` : ''}.`;
+      e.target.textContent = 'Stäng';
+      e.target.disabled = false;
+      e.target.onclick = () => { closeSheet(); renderRecipes(); };
+      renderRecipes();
+    }, { once: true });
+  });
+}
+
+function openNewList() {
+  openSheet(`<div id="new-list">
+    <div class="sheet-head"><div><h3>Ny receptlista</h3><div class="sub">T.ex. Favoritrecept eller en veckoplanering</div></div></div>
+    <div class="chips small" style="margin-bottom:10px">
+      ${[DEFAULT_LIST, nextWeekName()].filter(n => !recipeListNames().includes(n)).map(n => `<button type="button" class="chip" data-nl="${esc(n)}">${esc(n)}</button>`).join('')}
+    </div>
+    <div class="field"><input id="nl-name" type="text" placeholder="Namn på listan"></div>
+    <button class="btn primary" data-nl-go>Skapa</button>
+  </div>`, root => {
+    const input = root.querySelector('#nl-name');
+    root.querySelector('#new-list').addEventListener('click', e => {
+      const q = e.target.closest('[data-nl]');
+      if (q) input.value = q.dataset.nl;
+      if (e.target.closest('[data-nl-go]') && input.value.trim()) {
+        const name = input.value.trim();
+        if (!state.extraLists.includes(name)) state.extraLists.push(name);
+        state.recipeList = name;
+        closeSheet();
+        renderRecipes();
+      }
+    });
+  });
 }
 
 async function importRecipe(raw) {
   const status = $('#r-status');
+  const many = icaLinks(raw);
+  if (many.length > 1) {
+    if (!Sync.enabled || !Sync.status.user) { if (status) status.textContent = 'Logga in under Mer först – recepten hämtas via ert hushålls databas.'; return; }
+    openBulkImport(many);
+    return;
+  }
   const url = (String(raw).match(/https?:\/\/\S+/) || [])[0]?.replace(/[)\].,]+$/, '');
   if (!url) { if (status) status.textContent = 'Hittade ingen länk. Klistra in adressen till receptet.'; return; }
   if (!Sync.enabled || !Sync.status.user) {
@@ -172,7 +314,14 @@ async function importRecipe(raw) {
     if (!ld) throw new Error('Sidan innehöll inget recept');
     const recipe = recipeFromLd(ld, res.url || url);
     const existing = state.recipes.find(r => r.id === recipe.id);
-    if (existing && !existing.deleted) { openRecipeSheet(existing); if (status) status.textContent = 'Receptet fanns redan.'; return; }
+    const list = state.recipeList !== 'Alla' ? state.recipeList : null;
+    if (existing && !existing.deleted) {
+      const r = list ? await setRecipeLists(existing, [...(existing.lists || []), list]) : existing;
+      openRecipeSheet(r);
+      if (status) status.textContent = list ? `Receptet fanns redan – nu även i ${list}.` : 'Receptet fanns redan.';
+      return;
+    }
+    recipe.lists = list ? [list] : [];
     await db.put('recipes', recipe);
     state.recipes.push(recipe);
     renderRecipes();
@@ -210,6 +359,11 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
     <div class="sheet-head"><div style="flex:1"><h3>${esc(recipe.title)}</h3>
       <div class="sub">${c.have} av ${c.total} ingredienser hemma</div></div></div>
     ${recipe.description ? `<p class="meta">${esc(recipe.description)}</p>` : ''}
+    <div class="field"><span class="label">Listor</span>
+      <div class="chips small" id="r-lists">
+        ${[...new Set([DEFAULT_LIST, ...recipeListNames()])].sort(listOrder).map(n => `<button type="button" class="chip ${recipe.lists?.includes(n) ? 'on' : ''}" data-tl="${esc(n)}">${esc(n)}</button>`).join('')}
+        <button type="button" class="chip" data-tl-new>+ ${esc(nextWeekName())}</button>
+      </div></div>
     ${recipe.servings ? `<div class="field"><span class="label">${esc(recipe.servingsLabel)}</span>
       <div class="qty"><button class="step" data-serv="-1" aria-label="Färre">−</button>
       <input id="r-serv" value="${servings}" inputmode="numeric" readonly>
@@ -231,6 +385,16 @@ function openRecipeSheet(recipe, servings = recipe.servings) {
       openRecipeSheet(recipe, next);
     }));
     root.querySelector('[data-cook]').addEventListener('click', () => openCookSheet(recipe, servings));
+    root.querySelector('#r-lists').addEventListener('click', async e => {
+      const t = e.target.closest('[data-tl]');
+      const n = e.target.closest('[data-tl-new]');
+      if (!t && !n) return;
+      const name = t ? t.dataset.tl : nextWeekName();
+      const has = recipe.lists?.includes(name);
+      const updated = await setRecipeLists(recipe, has ? recipe.lists.filter(x => x !== name) : [...(recipe.lists || []), name]);
+      openRecipeSheet(updated, servings);
+      toast(has ? `Borttaget från ${name}` : `Tillagt i ${name}`);
+    });
     root.querySelector('[data-missing]').addEventListener('click', () => addMissingFromRecipe(recipe, servings));
     root.querySelector('.ings').addEventListener('click', e => {
       const b = e.target.closest('[data-ing]');
@@ -362,12 +526,16 @@ async function undoRecipeDelete(u) {
 
 function bindRecipes() {
   $('#view-recipes').addEventListener('click', async e => {
+    const chip = e.target.closest('[data-rlist]');
+    if (chip) { state.recipeList = chip.dataset.rlist; renderRecipes(); return; }
     const row = e.target.closest('[data-recipe]');
     if (row) { const r = state.recipes.find(x => x.id === row.dataset.recipe); if (r) openRecipeSheet(r); return; }
     const act = e.target.closest('[data-recipe-act]')?.dataset.recipeAct;
     if (act === 'import') importRecipe($('#r-url').value);
     if (act === 'ai') openAiExport();
     if (act === 'ai-import') openAiImport();
+    if (act === 'new-list') openNewList();
+    if (act === 'shop-list') shopWholeList(state.recipeList);
     if (act === 'paste') {
       try {
         const text = await navigator.clipboard.readText();
