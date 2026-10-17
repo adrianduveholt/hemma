@@ -67,6 +67,7 @@ const state = {
   history: [],
   settings: {},
   offers: null,
+  shopMode: 'list',
   extraLists: [],
   photoUrls: new Map(),
   suggestions: [],

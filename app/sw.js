@@ -1,5 +1,5 @@
 // Cachar appens filer så att den startar utan nät. Höj VERSION vid varje ändring.
-const VERSION = 'hemma-v22';
+const VERSION = 'hemma-v23';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'db.js', 'sync.js', 'config.js', 'catalog.js', 'recipes.js', 'recipe-view.js', 'shop-view.js', 'scan.js', 'ai-export.js', 'offers.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-180.png'];
 
 self.addEventListener('install', e => {

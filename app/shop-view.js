@@ -30,7 +30,7 @@ function lowStockItems() {
 }
 
 function categoryOf(item) {
-  return state.products.get(item.productId)?.category || 'Övrigt';
+  return state.products.get(item.productId)?.category || item.category || 'Övrigt';
 }
 
 function updateShopBadge() {
@@ -40,7 +40,7 @@ function updateShopBadge() {
 }
 
 // ---------- Lägga till ----------
-async function addShopping({ product = null, name, qty = null, unit = null, note = '', source = 'manual', recipeId = null }) {
+async function addShopping({ product = null, name, qty = null, unit = null, note = '', source = 'manual', recipeId = null, category = null }) {
   const now = new Date().toISOString();
   const existing = product && openItems().find(i => i.productId === product.id);
   if (existing) {
@@ -59,7 +59,7 @@ async function addShopping({ product = null, name, qty = null, unit = null, note
   }
   const item = {
     id: uuid(), productId: product?.id || null, name: product?.name || name,
-    qty, unit: unit || product?.unit || null, note, source, recipeId,
+    qty, unit: unit || product?.unit || null, note, source, recipeId, category,
     checked: false, createdAt: now, updatedAt: now,
   };
   await db.put('shopping', item);
@@ -203,13 +203,15 @@ function renderShop() {
   // Erbjudandena hämtas i bakgrunden; listan ritas om när de kommer.
   state.offerHits = null;
   loadOffers();
+  if (state.shopMode === 'offers' && state.settings?.icaStore) { offerProductCache.clear(); renderAllOffers(el); return; }
   if (!open.length && !checked.length && !emptied.length) {
-    el.innerHTML = offersHtml() + emptyHtml('🛒', 'Inköpslistan är tom', 'Skriv en vara i fältet ovan, eller tryck ”Lägg det som saknas på listan” i ett recept. Varor med en ”alltid hemma”-nivå hamnar här av sig själva.');
+    el.innerHTML = shopModeHtml() + offersHtml() + emptyHtml('🛒', 'Inköpslistan är tom', 'Skriv en vara i fältet ovan, eller tryck ”Lägg det som saknas på listan” i ett recept. Varor med en ”alltid hemma”-nivå hamnar här av sig själva.');
     return;
   }
   const groups = AISLE_ORDER.map(cat => ({ cat, items: open.filter(i => categoryOf(i) === cat).sort((a, b) => a.name.localeCompare(b.name, 'sv')) }))
     .filter(g => g.items.length);
   el.innerHTML = `
+    ${shopModeHtml()}
     ${offersHtml()}
     ${emptiedHtml(emptied)}
     ${!open.length && !checked.length ? '<p class="meta">Inköpslistan är tom.</p>' : ''}
@@ -407,6 +409,12 @@ function bindShop() {
     const act = e.target.closest('[data-shop-act]')?.dataset.shopAct;
     if (act === 'emptied-toggle') { setEmptiedOpen(!emptiedOpen()); renderShop(); return; }
     if (act === 'offers-toggle') { setOffersOpen(!offersOpen()); renderShop(); return; }
+    const mode = e.target.closest('[data-shop-mode]');
+    if (mode) { state.shopMode = mode.dataset.shopMode; renderShop(); window.scrollTo(0, 0); return; }
+    const cat = e.target.closest('[data-offer-cat]');
+    if (cat) { offerFilter.cat = cat.dataset.offerCat; renderShop(); return; }
+    const any = e.target.closest('[data-offer-any]');
+    if (any) { addAnyOffer(any.dataset.offerAny); return; }
     if (act === 'pick-store') { state.view = 'more'; render(); setTimeout(() => $('#store-card')?.scrollIntoView({ block: 'center' }), 50); return; }
     const oa = e.target.closest('[data-offer-add]');
     if (oa) { addFromOffer(Number(oa.dataset.offerAdd)); return; }

@@ -361,3 +361,12 @@ button.ing:active { background: var(--surface-2); }
 .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .undo-btn { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .undo-btn:active { background: var(--surface-2); }
+
+/* Växlare Inköpslista | Erbjudanden */
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 4px 0 10px; background: var(--surface-2); border-radius: 12px; }
+.seg button { border: 0; border-radius: 9px; padding: 9px 6px; background: none; color: var(--muted); font-weight: 600; font-size: 14px; cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.offer-search { margin: 0 0 6px; }
+.offer-search input { width: 100%; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); font-size: 16px; padding: 0 12px; }
+.list .offer-row { border-top: 1px solid var(--line); }
+.list .offer-row:first-child { border-top: 0; }

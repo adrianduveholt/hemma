@@ -234,3 +234,109 @@ function bindStoreCard(root) {
     loadOffers(true);
   });
 }
+
+// ---------- Alla erbjudanden ----------
+// Visas i Inköp när man växlar till "Erbjudanden". Erbjudanden som matchar era varor märks "För er".
+const offerFilter = { q: '', cat: 'Alla' };
+
+// Koppla ett erbjudande till en vara i katalogen (streckkod först, annars namn).
+// Resultatet sparas tills Inköp ritas om från början, så att sökningen går snabbt.
+const offerProductCache = new Map();
+function productForOffer(offer) {
+  if (offerProductCache.has(offer.id)) return offerProductCache.get(offer.id);
+  const p = findProductForOffer(offer);
+  offerProductCache.set(offer.id, p);
+  return p;
+}
+function findProductForOffer(offer) {
+  for (const p of state.products.values()) {
+    if (!p.deleted && p.barcodes?.some(b => offer.eans.includes(b.code))) return p;
+  }
+  const ing = parseIngredient(offer.name);
+  let best = null, bestScore = 59;
+  for (const p of state.products.values()) {
+    if (p.deleted || p.hidden) continue;
+    const s = Math.max(...ing.alts.map(a => productScore(a, p)));
+    if (s > bestScore) { bestScore = s; best = p; }
+  }
+  return best;
+}
+
+function shopModeHtml() {
+  if (!state.settings?.icaStore) return '';
+  const n = state.offers?.list?.length || 0;
+  const mode = state.shopMode || 'list';
+  return `<div class="seg" role="tablist">
+    <button role="tab" class="${mode === 'list' ? 'on' : ''}" data-shop-mode="list">Inköpslista</button>
+    <button role="tab" class="${mode === 'offers' ? 'on' : ''}" data-shop-mode="offers">Erbjudanden${n ? ` · ${n}` : ''}</button>
+  </div>`;
+}
+
+function renderAllOffers(el) {
+  const slug = state.settings?.icaStore;
+  const list = state.offers?.slug === slug ? state.offers?.list || [] : [];
+  if (!list.length) {
+    el.innerHTML = shopModeHtml() + (offersLoading
+      ? '<p class="meta">Hämtar erbjudanden…</p>'
+      : emptyHtml('🏷', 'Inga erbjudanden hittades', state.offers?.error ? `Kunde inte hämta: ${esc(state.offers.error)}` : 'Försök igen om en stund.'));
+    return;
+  }
+  const mine = new Set(relevantOffers().map(h => h.offer.id));
+  const onList = new Set(openItems().map(i => i.productId).filter(Boolean));
+  const onListNames = new Set(openItems().map(i => norm(i.name)));
+  const cats = [...new Set(list.map(o => o.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'sv'));
+  const q = norm(offerFilter.q);
+  const shown = list
+    .filter(o => offerFilter.cat === 'Alla' || (offerFilter.cat === 'För er' ? mine.has(o.id) : o.category === offerFilter.cat))
+    .filter(o => !q || norm(`${o.name} ${o.brand}`).includes(q))
+    .sort((a, b) => (mine.has(b.id) - mine.has(a.id)) || a.category.localeCompare(b.category, 'sv') || a.name.localeCompare(b.name, 'sv'));
+
+  const groups = [];
+  for (const o of shown) {
+    const g = mine.has(o.id) && offerFilter.cat === 'Alla' ? 'För er' : o.category || 'Övrigt';
+    if (!groups.length || groups[groups.length - 1].name !== g) groups.push({ name: g, items: [] });
+    groups[groups.length - 1].items.push(o);
+  }
+
+  el.innerHTML = `${shopModeHtml()}
+    <div class="field offer-search"><input id="offer-q" type="search" placeholder="Sök bland erbjudandena" value="${esc(offerFilter.q)}" autocomplete="off"></div>
+    <div class="filters">${['Alla', ...(mine.size ? ['För er'] : []), ...cats].map(c =>
+      `<button class="chip ${c === offerFilter.cat ? 'on' : ''}" data-offer-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    ${groups.map(g => `<div class="group"><h2>${esc(g.name)}</h2><span class="count">${g.items.length}</span></div>
+      <div class="list">${g.items.map(o => {
+        const p = productForOffer(o);
+        const listed = p ? onList.has(p.id) : onListNames.has(norm(o.name));
+        return `<div class="emptied-row offer-row">
+          <span class="thumb small">${iconFor(o.name, p?.category || o.category)}</span>
+          <div class="emptied-name"><b>${esc(o.name)}</b> ${esc(o.size)} · <b class="price">${esc(o.price)}</b>${mine.has(o.id) ? ' <span class="offer-tag">För er</span>' : ''}
+            <div class="offer-sub">${[o.brand, o.regular.replace(/\.$/, ''), o.validTo ? `t.o.m. ${shortDate(o.validTo)}` : '', o.info].filter(Boolean).map(esc).join(' · ')}</div></div>
+          ${listed ? '<span class="on-list" title="Står på listan">✓</span>'
+            : `<button class="icon-mini add" data-offer-any="${esc(o.id)}" aria-label="Lägg ${esc(o.name)} på listan">+</button>`}
+        </div>`;
+      }).join('')}</div>`).join('') || '<p class="meta">Inga erbjudanden matchar.</p>'}
+    <p class="meta"><a href="https://www.ica.se/erbjudanden/${esc(slug)}/" target="_blank" rel="noopener">Öppna erbjudandena på ica.se</a></p>`;
+
+  const input = el.querySelector('#offer-q');
+  input.addEventListener('input', () => {
+    offerFilter.q = input.value;
+    const pos = input.selectionStart;
+    renderAllOffers(el);
+    const again = el.querySelector('#offer-q');
+    again.focus();
+    again.setSelectionRange(pos, pos);
+  });
+}
+
+async function addAnyOffer(id) {
+  const offer = state.offers?.list?.find(o => o.id === id);
+  if (!offer) return;
+  const product = productForOffer(offer);
+  const name = product ? product.name : [offer.name, offer.size].filter(Boolean).join(' ');
+  // ICA:s avdelning → inköpslistans butiksordning, för varor som inte finns i katalogen.
+  const ICA_AISLE = { 'Mejeri': 'Mejeri', 'Frukt & Grönt': 'Grönsaker', 'Bröd, kex & bageri': 'Bröd', 'Djupfryst': 'Fryst',
+    'Färskvaror': 'Kött', 'Skafferivaror': 'Skafferi', 'Dryck': 'Dryck', 'Kött, chark & fågel': 'Kött', 'Fisk & skaldjur': 'Fisk & skaldjur' };
+  const item = await addShopping({ product, name, category: ICA_AISLE[offer.category] || null, note: `Extrapris ${offer.price}${offer.validTo ? ` t.o.m. ${shortDate(offer.validTo)}` : ''}${offer.brand ? ` · ${offer.brand}` : ''}` });
+  updateShopBadge();
+  renderShop();
+  toast(`${item.name} på listan`, { type: 'shop-added', itemId: item.id });
+}
