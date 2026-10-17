@@ -156,22 +156,29 @@ async function markReviewed(groups) {
   }
 }
 
+// Hopfälld som standard så att den inte skymmer inköpslistan; läget kommer man ihåg per telefon.
+function emptiedOpen() { try { return localStorage.getItem('hemma-emptied-open') === '1'; } catch { return false; } }
+function setEmptiedOpen(v) { try { localStorage.setItem('hemma-emptied-open', v ? '1' : ''); } catch {} }
+
 function emptiedHtml(groups) {
   if (!groups.length) return '';
-  return `<div class="group"><h2>Tog slut nyligen</h2><span class="count">${groups.length}</span></div>
-    <div class="list emptied">${groups.map(g => {
-      const p = state.products.get(g.productId);
-      const why = g.type === 'discarded' ? 'slängd' : g.recipe ? `slut efter ${esc(g.recipe)}` : 'tog slut';
-      return `<div class="shop-row">
-        <span class="thumb small">${iconFor(g.name, p?.category)}</span>
-        <div class="shop-main"><div class="r-name">${esc(g.name)}</div><div class="r-sub">${why} · ${shortDate(g.ts.slice(0, 10))}</div></div>
-        <button class="mini-btn" data-emptied-add="${esc(g.productId)}" aria-label="Lägg ${esc(g.name)} på listan">+ Listan</button>
-        <button class="mini-btn quiet" data-emptied-skip="${esc(g.productId)}" aria-label="Hoppa över ${esc(g.name)}">Inte nu</button>
+  const open = emptiedOpen();
+  return `<div class="emptied-box ${open ? 'open' : ''}">
+    <button class="emptied-head" data-shop-act="emptied-toggle" aria-expanded="${open}">
+      <span>Tog slut nyligen</span><span class="count">${groups.length}</span><span class="chev" aria-hidden="true">›</span>
+    </button>
+    ${open ? `<div class="emptied-list">${groups.map(g => {
+      const why = g.type === 'discarded' ? 'slängd' : g.recipe ? esc(g.recipe) : 'slut';
+      return `<div class="emptied-row">
+        <div class="emptied-name"><b>${esc(g.name)}</b> <span>${why} · ${shortDate(g.ts.slice(0, 10))}</span></div>
+        <button class="icon-mini add" data-emptied-add="${esc(g.productId)}" aria-label="Lägg ${esc(g.name)} på listan">+</button>
+        <button class="icon-mini" data-emptied-skip="${esc(g.productId)}" aria-label="Hoppa över ${esc(g.name)}">×</button>
       </div>`;
     }).join('')}</div>
-    ${groups.length > 1 ? `<div class="btn-row" style="margin-top:8px">
-      <button class="btn" data-shop-act="emptied-all">Lägg alla ${groups.length} på listan</button>
-      <button class="btn" data-shop-act="emptied-none">Inte nu</button></div>` : ''}`;
+    ${groups.length > 1 ? `<div class="emptied-all">
+      <button class="link-btn" data-shop-act="emptied-all">+ Lägg alla ${groups.length} på listan</button>
+      <button class="link-btn quiet" data-shop-act="emptied-none">Rensa</button></div>` : ''}` : ''}
+  </div>`;
 }
 
 async function emptiedAction(kind, productId) {
@@ -392,6 +399,7 @@ function bindShop() {
     const es = e.target.closest('[data-emptied-skip]');
     if (es) { emptiedAction('skip', es.dataset.emptiedSkip); return; }
     const act = e.target.closest('[data-shop-act]')?.dataset.shopAct;
+    if (act === 'emptied-toggle') { setEmptiedOpen(!emptiedOpen()); renderShop(); return; }
     if (act === 'emptied-all') emptiedAction('add');
     if (act === 'emptied-none') emptiedAction('skip');
     if (act === 'stock') openStockSheet();
