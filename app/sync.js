@@ -161,6 +161,7 @@ const Sync = (() => {
     for (const e of await db.all('events')) entries.push({ kind: 'events', recId: e.id });
     for (const r of await db.all('recipes')) entries.push({ kind: 'recipes', recId: r.id });
     for (const s of await db.all('shopping')) entries.push({ kind: 'shopping', recId: s.id });
+    for (const s of await db.all('settings')) entries.push({ kind: 'settings', recId: s.id });
     for (const ph of await db.all('photos')) entries.push({ kind: 'photo', recId: ph.id });
     await db.putMany('outbox', entries.map(e => ({ ...e, id: e.kind + '|' + e.recId, at: now })));
   }
@@ -193,6 +194,17 @@ const Sync = (() => {
       document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
       emit();
       if (status.user && status.household) start();
+    },
+
+    async fetchIcaOffers(store) {
+      const { data, error } = await client.rpc('fetch_ica_offers', { p_store: store });
+      if (error) throw error;
+      return data;
+    },
+    async searchIcaStores(query) {
+      const { data, error } = await client.rpc('search_ica_stores', { p_query: query });
+      if (error) throw error;
+      return data || [];
     },
 
     async fetchRecipe(url) {

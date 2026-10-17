@@ -120,10 +120,11 @@ async function shopOnStocked(productId) {
 function shopRowHtml(item) {
   const qty = item.qty != null ? fmtQty(item.qty, item.unit || 'st') : '';
   const sub = [qty, item.auto ? `hemma ${fmtQty(roundQty(item.have, item.unit), item.unit)}` : item.note].filter(Boolean).join(' · ');
+  const offer = !item.checked && offerFor(item.productId);
   return `<div class="shop-row ${item.checked ? 'done' : ''}">
     <button class="shop-check" data-check="${esc(item.id)}" aria-label="${item.checked ? 'Avbocka' : 'Bocka av'} ${esc(item.name)}">${item.checked ? '✓' : ''}</button>
     <button class="shop-main" data-shop="${esc(item.id)}">
-      <div class="r-name">${esc(item.name)}</div>${sub ? `<div class="r-sub">${esc(sub)}</div>` : ''}
+      <div class="r-name">${esc(item.name)}${offer ? ` <span class="offer-tag">🏷 ${esc(offer.price)}</span>` : ''}</div>${sub ? `<div class="r-sub">${esc(sub)}</div>` : ''}
     </button>
     ${item.auto ? '<span class="badge">Alltid hemma</span>' : ''}
   </div>`;
@@ -198,13 +199,17 @@ function renderShop() {
   const emptied = recentlyEmptied();
   updateShopBadge();
 
+  // Erbjudandena hämtas i bakgrunden; listan ritas om när de kommer.
+  state.offerHits = null;
+  loadOffers();
   if (!open.length && !checked.length && !emptied.length) {
-    el.innerHTML = emptyHtml('🛒', 'Inköpslistan är tom', 'Skriv en vara i fältet ovan, eller tryck ”Lägg det som saknas på listan” i ett recept. Varor med en ”alltid hemma”-nivå hamnar här av sig själva.');
+    el.innerHTML = offersHtml() + emptyHtml('🛒', 'Inköpslistan är tom', 'Skriv en vara i fältet ovan, eller tryck ”Lägg det som saknas på listan” i ett recept. Varor med en ”alltid hemma”-nivå hamnar här av sig själva.');
     return;
   }
   const groups = AISLE_ORDER.map(cat => ({ cat, items: open.filter(i => categoryOf(i) === cat).sort((a, b) => a.name.localeCompare(b.name, 'sv')) }))
     .filter(g => g.items.length);
   el.innerHTML = `
+    ${offersHtml()}
     ${emptiedHtml(emptied)}
     ${!open.length && !checked.length ? '<p class="meta">Inköpslistan är tom.</p>' : ''}
     ${groups.map(g => `<div class="group"><h2>${CATEGORY_ICON[g.cat] || ''} ${g.cat}</h2><span class="count">${g.items.length}</span></div>
@@ -400,6 +405,10 @@ function bindShop() {
     if (es) { emptiedAction('skip', es.dataset.emptiedSkip); return; }
     const act = e.target.closest('[data-shop-act]')?.dataset.shopAct;
     if (act === 'emptied-toggle') { setEmptiedOpen(!emptiedOpen()); renderShop(); return; }
+    if (act === 'offers-toggle') { setOffersOpen(!offersOpen()); renderShop(); return; }
+    if (act === 'pick-store') { state.view = 'more'; render(); setTimeout(() => $('#store-card')?.scrollIntoView({ block: 'center' }), 50); return; }
+    const oa = e.target.closest('[data-offer-add]');
+    if (oa) { addFromOffer(Number(oa.dataset.offerAdd)); return; }
     if (act === 'emptied-all') emptiedAction('add');
     if (act === 'emptied-none') emptiedAction('skip');
     if (act === 'stock') openStockSheet();

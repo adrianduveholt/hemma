@@ -64,6 +64,8 @@ const state = {
   shopping: [],
   events: [],
   recipeList: 'Alla',
+  settings: {},
+  offers: null,
   extraLists: [],
   photoUrls: new Map(),
   suggestions: [],
@@ -425,12 +427,14 @@ async function renderMore() {
       <input id="import-input" type="file" accept="application/json,.json" hidden>
     </div>
     <div class="card" id="sync-card"></div>
+    ${storeCardHtml()}
     <div class="card">
       <h3>Egna varor</h3>
       <p>${[...state.products.values()].filter(p => p.custom && !p.deleted).map(p => esc(p.name)).join(', ') || 'Inga egna varor än. Skriv ett namn som inte finns så skapas den.'}</p>
     </div>
-    <p class="meta">Hemma · version 0.2</p>`;
+    <p class="meta">Hemma · version 0.3</p>`;
   renderSyncCard();
+  bindStoreCard(el);
 }
 
 // ---------- Synk-kortet ----------
@@ -1046,6 +1050,7 @@ async function load() {
   state.lots = (await db.all('lots')).filter(l => l.status === 'active' && !l.deleted);
   state.recipes = (await db.all('recipes')).filter(r => !r.deleted);
   state.shopping = (await db.all('shopping')).filter(i => !i.deleted);
+  state.settings = (await db.get('settings', 'household')) || {};
   // De senaste två veckornas händelser räcker för "Tog slut nyligen".
   const since = addDays(todayIso(), -14);
   state.events = (await db.all('events')).filter(e => !e.deleted && e.ts.slice(0, 10) >= since);
@@ -1124,6 +1129,7 @@ function bind() {
     if ($('#sheet').hidden) render();
   });
   Sync.on(() => renderSyncCard());
+  loadOffers();
   // Delat från en annan app (Android) eller länk med ?url=: öppna receptfliken och hämta.
   const shared = new URLSearchParams(location.search);
   const sharedText = [shared.get('url'), shared.get('text')].filter(Boolean).join(' ');
